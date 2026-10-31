@@ -28,6 +28,15 @@ support an answer. Relationship proposals remain pending until reviewed.
 Hosted inference is the current default; do not describe the project as fully
 local.
 
+## Continuous integration
+
+GitHub Actions runs on pull requests targeting `main` and pushes to `main`.
+The backend job installs `backend/requirements-dev.txt`, compiles Python
+modules, and runs the pytest suite with the deterministic provider; tests do
+not require PostgreSQL or external API credentials. The frontend job runs
+TypeScript validation and a Next.js production build using `npm ci`. Workflow
+results are available in the repository's Actions tab.
+
 Candidate reconciliation compares normalized decision content and status,
 verified evidence overlap, and source discussion. A shared discussion ID alone
 never suppresses a candidate. Exact or high-overlap duplicates link to the
