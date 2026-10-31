@@ -291,19 +291,49 @@ Sonipat**, under:
 **Problem Statement 6: Open Source Decision Intelligence and Knowledge
 Recovery**
 
-The team is currently working toward an MVP. The implementation status,
-setup instructions, screenshots, evaluation results, and exact model
-choices will be added as they become available.
+The first vertical slice is implemented: a FastAPI backend, PostgreSQL
+schema, GitHub ingestion, deterministic evidence-preserving extraction,
+and a Next.js source discussion explorer. LLM extraction and semantic
+embeddings remain future work.
 
-### Planned MVP milestones
+### Local setup
 
--   [ ] Connect to a GitHub repository and ingest discussion data.
--   [ ] Normalize issues, pull requests, reviews, and comments.
--   [ ] Extract candidate decisions, rationale, and alternatives.
--   [ ] Classify decision status.
--   [ ] Persist structured decisions with source evidence.
--   [ ] Retrieve relevant decisions from a developer query.
--   [ ] Display evidence-backed results in the frontend.
+Requirements: Python 3.13+, Node.js 20+, npm, and Docker Desktop.
+
+```bash
+docker compose up -d postgres
+python3 -m venv .venv
+.venv/bin/pip install -r backend/requirements.txt
+cp .env.example .env
+
+cd backend
+../.venv/bin/python run.py
+```
+
+In another terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`, enter a public GitHub repository URL, start
+ingestion, then click **Extract decisions**. The API is available at
+`http://localhost:8000/docs`. Extraction currently uses the explicit
+deterministic MVP provider; it only creates evidence-backed candidates and
+does not claim that a language model is configured.
+Set `GITHUB_TOKEN` in `.env` or the shell for higher GitHub API limits.
+
+### MVP milestones
+
+-   [x] Connect to a GitHub repository and ingest discussion data.
+-   [x] Normalize issues, pull requests, reviews, and comments.
+-   [x] Persist structured discussions with source evidence.
+-   [x] Display ingested source discussions in the frontend.
+-   [ ] Extract candidate decisions with an evaluated language model.
+-   [ ] Classify decision status with an evaluated language model.
+-   [ ] Retrieve decisions with semantic embeddings.
 -   [ ] Evaluate extraction and classification against manually reviewed
     examples.
 
