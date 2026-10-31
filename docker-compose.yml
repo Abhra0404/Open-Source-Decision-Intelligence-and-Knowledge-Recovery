@@ -14,6 +14,9 @@ services:
       - ./backend/migrations/003_extraction_diagnostics.sql:/docker-entrypoint-initdb.d/003_extraction_diagnostics.sql:ro
       - ./backend/migrations/004_chat.sql:/docker-entrypoint-initdb.d/004_chat.sql:ro
       - ./backend/migrations/005_decision_relationships.sql:/docker-entrypoint-initdb.d/005_decision_relationships.sql:ro
+      - ./backend/migrations/006_extraction_lifecycle.sql:/docker-entrypoint-initdb.d/006_extraction_lifecycle.sql:ro
+      - ./backend/migrations/007_groq_usage.sql:/docker-entrypoint-initdb.d/007_groq_usage.sql:ro
+      - ./backend/migrations/008_candidate_deduplication.sql:/docker-entrypoint-initdb.d/008_candidate_deduplication.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U metis -d metis"]
       interval: 5s

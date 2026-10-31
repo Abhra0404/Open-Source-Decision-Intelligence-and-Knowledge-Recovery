@@ -1,4 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from datetime import datetime
+import time
 from uuid import UUID
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
@@ -6,13 +9,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 
-from .database import connection, get_connection, lock_repository
+from .database import connection, get_connection, lock_repository, open_weight_model_lock
 from .github import GitHubClient, GitHubError
 from .cleaning import clean_discussion
 from .chat import answer_question as generate_chat_answer, validate_citations
-from .extraction import DiscussionInput, assess_candidate, detect_decision_signals
+from .extraction import DiscussionInput, ExtractedDecision, ValidationOutcome, assess_candidate, detect_decision_signals
 from .ingestion import ingest_repository, parse_repository_url
 from .config import settings
+from .deduplication import DecisionMatch, match_candidate
 from .providers import ProviderError, build_provider
 from .relationships import RelationshipProposal, validate_relationship
 from .schemas import ChatMessageCreate, ConversationCreate, ExtractionRequest, ExtractionResponse, IngestionCreate, IngestionResponse, RelationshipReviewRequest, RepositoryCreate, RepositoryResponse, ReviewRequest, SearchRequest
@@ -27,6 +31,29 @@ app.add_middleware(
 executor = ThreadPoolExecutor(max_workers=2)
 
 
+@dataclass(frozen=True)
+class CandidatePersistence:
+    disposition: str
+    match: DecisionMatch
+    decision_id: UUID | None = None
+
+
+def _configured_provider():
+    return build_provider(
+        settings.model_provider,
+        settings.active_model_name,
+        settings.active_base_url,
+        settings.active_api_key,
+        settings.active_timeout_seconds,
+        groq_max_retries=settings.groq_max_retries,
+    )
+
+
+@app.on_event("startup")
+def validate_provider_configuration() -> None:
+    _configured_provider()
+
+
 def error(code: str, message: str, status_code: int) -> HTTPException:
     return HTTPException(status_code, detail={"error": {"code": code, "message": message, "details": None}})
 
@@ -38,10 +65,31 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/v1/system/model-config")
+def get_model_config() -> dict:
+    provider = settings.model_provider
+    return {
+        "provider": provider,
+        "model_name": settings.active_model_name,
+        "base_url": settings.active_base_url or "(hosted provider default)",
+        "timeout_seconds": settings.active_timeout_seconds,
+        "groq_max_retries": settings.groq_max_retries,
+        "status": "ready",
+        "has_api_key": bool(settings.active_api_key),
+        "capabilities": [
+            "Decision Extraction",
+            "Status Classification (Accepted, Rejected, Proposed, Unresolved)",
+            "Independent Evidence Grounding",
+            "Decision Relationship Proposal",
+            "Evidence-Grounded Intelligence Q&A"
+        ]
+    }
+
+
 @app.get("/api/v1/repositories")
 def list_repositories(conn: Connection = Depends(get_connection)) -> dict:
     with conn.cursor() as cur:
-        cur.execute("SELECT id, full_name, html_url FROM repositories ORDER BY full_name")
+        cur.execute("SELECT id, full_name, html_url, description, default_branch, is_private, created_at, updated_at FROM repositories ORDER BY full_name")
         items = cur.fetchall()
     return {"items": items, "total": len(items)}
 
@@ -235,16 +283,64 @@ def list_discussions(repository_id: UUID, limit: int = Query(50, ge=1, le=100), 
 
 def run_extraction(extraction_id: UUID, repository_id: UUID, force_reprocess: bool) -> None:
     with connection() as conn:
-        lock_repository(conn, repository_id)
-        conn.execute("UPDATE extraction_runs SET status = 'running', started_at = NOW() WHERE id = %s", (extraction_id,))
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE extraction_runs SET status = 'waiting_for_model', queued_at = COALESCE(queued_at, created_at) WHERE id = %s AND status = 'queued' RETURNING id",
+                (extraction_id,),
+            )
+            queued_run = cur.fetchone()
         conn.commit()
+        if not queued_run:
+            return
+    try:
+        if settings.model_provider in {"open_weight", "ollama"}:
+            with open_weight_model_lock(settings.active_model_name, timeout_seconds=30) as lock_acquired_at:
+                _run_extraction_body(extraction_id, repository_id, force_reprocess, lock_acquired_at)
+        else:
+            _run_extraction_body(extraction_id, repository_id, force_reprocess, None)
+    except Exception as exc:
+        with connection() as conn:
+            conn.execute(
+                "UPDATE extraction_runs SET status = 'failed', error_message = %s, failed_at = clock_timestamp(), completed_at = clock_timestamp(), queue_duration_ms = COALESCE(queue_duration_ms, (EXTRACT(EPOCH FROM (clock_timestamp() - COALESCE(queued_at, created_at))) * 1000)::integer) WHERE id = %s AND status IN ('queued', 'waiting_for_model', 'running')",
+                (str(exc)[:1000], extraction_id),
+            )
+            conn.commit()
+
+
+def _run_extraction_body(extraction_id: UUID, repository_id: UUID, force_reprocess: bool,
+                         lock_acquired_at: datetime | None) -> None:
+    with connection() as conn:
+        lock_repository(conn, repository_id)
+        inference_started: float | None = None
+        model_calls_completed = 0
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+        model_latency_ms = 0
+        prompt_tokens_complete = True
+        completion_tokens_complete = True
+        total_tokens_complete = True
+        model_retry_count = 0
+        model_response_ids: list[str] = []
+        model_revision = None
         try:
-            provider = build_provider(settings.model_provider, settings.model_name, settings.model_base_url, settings.model_api_key)
+            provider = _configured_provider()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE extraction_runs SET status = 'running', lock_acquired_at = %s, started_at = clock_timestamp(), queue_duration_ms = CASE WHEN %s::timestamptz IS NOT NULL THEN (EXTRACT(EPOCH FROM (%s::timestamptz - COALESCE(queued_at, created_at))) * 1000)::integer END WHERE id = %s AND status IN ('queued', 'waiting_for_model') RETURNING id",
+                    (lock_acquired_at, lock_acquired_at, lock_acquired_at, extraction_id),
+                )
+                transitioned = cur.fetchone()
+            if not transitioned:
+                conn.rollback()
+                return
             model_info = provider.get_model_info()
             conn.execute(
                 "UPDATE extraction_runs SET model_provider = %s, model_name = %s, model_revision = %s WHERE id = %s",
                 (model_info["provider"], model_info["model"], model_info.get("revision"), extraction_id),
             )
+            conn.commit()
+            inference_started = time.monotonic()
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -331,11 +427,10 @@ def run_extraction(extraction_id: UUID, repository_id: UUID, force_reprocess: bo
             candidates_rejected = 0
             decisions_existing = 0
             created = 0
-            prompt_tokens = 0
-            completion_tokens = 0
-            model_latency_ms = 0
-            model_revision = None
             for thread_key, records in grouped.items():
+                if _extraction_cancelled(conn, extraction_id):
+                    conn.rollback()
+                    return
                 lifecycle: dict[str, object] = {
                     "detected_signals": [],
                     "schema_validation_result": "not_run",
@@ -353,12 +448,71 @@ def run_extraction(extraction_id: UUID, repository_id: UUID, force_reprocess: bo
                     if signal_detected:
                         threads_with_signals += 1
                     provider_result = provider.extract_decision(repository_id, records)
+                    model_calls_completed += 1
                     candidate = provider_result.candidate
-                    prompt_tokens += provider_result.prompt_tokens or 0
-                    completion_tokens += provider_result.completion_tokens or 0
+                    model_retry_count += provider_result.retry_count
+                    if provider_result.response_id:
+                        model_response_ids.append(provider_result.response_id)
+                    if provider_result.prompt_tokens is None:
+                        prompt_tokens_complete = False
+                    else:
+                        prompt_tokens += provider_result.prompt_tokens
+                    if provider_result.completion_tokens is None:
+                        completion_tokens_complete = False
+                    else:
+                        completion_tokens += provider_result.completion_tokens
+                    if provider_result.total_tokens is None:
+                        total_tokens_complete = False
+                    else:
+                        total_tokens += provider_result.total_tokens
                     model_latency_ms += provider_result.latency_ms or 0
                     model_revision = model_revision or provider_result.revision
+                    lifecycle.update({
+                        "model_response_id": provider_result.response_id,
+                        "input_tokens": provider_result.prompt_tokens,
+                        "output_tokens": provider_result.completion_tokens,
+                        "total_tokens": provider_result.total_tokens,
+                        "retry_count": provider_result.retry_count,
+                    })
+                    if _extraction_cancelled(conn, extraction_id):
+                        conn.rollback()
+                        return
                 except Exception as exc:
+                    if getattr(exc, "model_call_completed", False):
+                        model_calls_completed += 1
+                        model_latency_ms += getattr(exc, "latency_ms", 0) or 0
+                        error_prompt_tokens = getattr(exc, "prompt_tokens", None)
+                        error_completion_tokens = getattr(exc, "completion_tokens", None)
+                        error_total_tokens = getattr(exc, "total_tokens", None)
+                        if error_prompt_tokens is None:
+                            prompt_tokens_complete = False
+                        else:
+                            prompt_tokens += error_prompt_tokens
+                        if error_completion_tokens is None:
+                            completion_tokens_complete = False
+                        else:
+                            completion_tokens += error_completion_tokens
+                        if error_total_tokens is None:
+                            total_tokens_complete = False
+                        else:
+                            total_tokens += error_total_tokens
+                        model_revision = model_revision or getattr(exc, "revision", None)
+                    elif getattr(exc, "stage", None):
+                        prompt_tokens_complete = False
+                        completion_tokens_complete = False
+                        total_tokens_complete = False
+                        model_latency_ms += getattr(exc, "latency_ms", 0) or 0
+                    model_retry_count += getattr(exc, "retry_count", 0)
+                    error_response_id = getattr(exc, "response_id", None)
+                    if error_response_id:
+                        model_response_ids.append(error_response_id)
+                    lifecycle.update({
+                        "model_response_id": error_response_id,
+                        "input_tokens": getattr(exc, "prompt_tokens", None),
+                        "output_tokens": getattr(exc, "completion_tokens", None),
+                        "total_tokens": getattr(exc, "total_tokens", None),
+                        "retry_count": getattr(exc, "retry_count", 0),
+                    })
                     lifecycle["validation_errors"] = [f"{getattr(exc, 'stage', 'extraction')}: {str(exc)[:1000]}"]
                     for row_metadata in thread_rows[thread_key]:
                         diagnostics.append(_diagnostic(
@@ -384,6 +538,10 @@ def run_extraction(extraction_id: UUID, repository_id: UUID, force_reprocess: bo
                     "candidate_title": candidate.title,
                     "candidate_status": candidate.status,
                     "candidate_summary": candidate.summary,
+                    "candidate_source_discussion_id": str(candidate.source_discussion_id),
+                    "candidate_rationale": candidate.rationale,
+                    "candidate_alternatives": candidate.alternatives,
+                    "candidate_tradeoffs": candidate.tradeoffs,
                     "evidence_references": _evidence_details(candidate),
                     "schema_validation_result": "passed",
                 })
@@ -413,14 +571,13 @@ def run_extraction(extraction_id: UUID, repository_id: UUID, force_reprocess: bo
                             True, "insufficient_evidence", outcome.review_reason, details=lifecycle,
                         ))
                     continue
-                source_discussion_id = (
-                    candidate.source_discussion_id
-                    if candidate.source_discussion_id in {record.id for record in records}
-                    else None
-                )
                 try:
                     persistence = _persist_candidate(
-                        conn, repository_id, candidate, outcome, force_reprocess,
+                        conn,
+                        repository_id,
+                        candidate,
+                        outcome,
+                        str(model_info["model"]),
                     )
                 except Exception as exc:
                     conn.rollback()
@@ -434,26 +591,46 @@ def run_extraction(extraction_id: UUID, repository_id: UUID, force_reprocess: bo
                             True, "extraction_error", str(exc)[:1000], details=lifecycle,
                         ))
                     continue
-                if persistence == "existing":
-                    decisions_existing += 1
-                    for row_metadata in thread_rows[thread_key]:
-                        diagnostics.append(_diagnostic(
-                            {**thread_metadata[thread_key], **row_metadata},
-                            extraction_id, repository_id, signal_detected, matched_rule,
-                            True, "insufficient_evidence", "active_decision_exists", details={
-                                **lifecycle, "persistence_result": "skipped_existing",
-                            },
-                        ))
-                    continue
+                lifecycle.update({
+                        "duplicate_match_type": persistence.match.match_type,
+                        "matched_decision_id": str(persistence.match.matched_decision_id)
+                        if persistence.match.matched_decision_id else None,
+                        "matched_decision_title": persistence.match.matched_decision_title,
+                        "matched_decision_status": persistence.match.matched_decision_status,
+                        "matched_decision_review_status": persistence.match.matched_decision_review_status,
+                        "matching_rationale": persistence.match.rationale,
+                        "similarity_score": persistence.match.similarity_score,
+                        "similarity_method": persistence.match.similarity_method,
+                        "candidate_disposition": persistence.disposition,
+                })
+                if persistence.disposition == "matched_existing":
+                        decisions_existing += 1
+                        for row_metadata in thread_rows[thread_key]:
+                            diagnostics.append(_diagnostic(
+                                {**thread_metadata[thread_key], **row_metadata},
+                                extraction_id, repository_id, signal_detected, matched_rule,
+                                True, "duplicate_candidate", persistence.match.rationale, details={
+                                    **lifecycle, "persistence_result": "duplicate_skipped",
+                                },
+                            ))
+                        continue
                 created += 1
                 for row_metadata in thread_rows[thread_key]:
-                    diagnostics.append(_diagnostic(
-                        {**thread_metadata[thread_key], **row_metadata},
-                        extraction_id, repository_id, signal_detected, matched_rule,
-                        True, "decision_created", outcome.review_reason, details={
-                            **lifecycle, "persistence_result": "decision_and_evidence_inserted",
-                        },
-                    ))
+                        diagnostics.append(_diagnostic(
+                            {**thread_metadata[thread_key], **row_metadata},
+                            extraction_id,
+                            repository_id,
+                            signal_detected,
+                            matched_rule,
+                            True,
+                            "decision_created",
+                            persistence.match.rationale
+                            if persistence.match.requires_review else outcome.review_reason,
+                            details={
+                                **lifecycle,
+                                "persistence_result": "decision_and_evidence_inserted",
+                            },
+                        ))
             with conn.cursor() as cur:
                 for diagnostic in diagnostics:
                     cur.execute(
@@ -463,27 +640,44 @@ def run_extraction(extraction_id: UUID, repository_id: UUID, force_reprocess: bo
                           source_type, title, associated_records, cleaned_content_length,
                           usable, decision_signal_detected, matched_rule, candidate_generated,
                           candidate_count, detected_signals, candidate_title, candidate_status,
-                          candidate_summary, evidence_references, schema_validation_result,
+                          candidate_summary, candidate_source_discussion_id, candidate_rationale,
+                          candidate_alternatives, candidate_tradeoffs, evidence_references,
+                          schema_validation_result,
                           semantic_validation_result, validation_errors, persistence_result,
-                          rejection_reason, outcome
+                          duplicate_match_type, matched_decision_id, matching_rationale,
+                          matched_decision_title, matched_decision_status,
+                          matched_decision_review_status, similarity_score,
+                          similarity_method, candidate_disposition,
+                          rejection_reason, outcome, model_response_id, input_tokens,
+                          output_tokens, total_tokens, retry_count
                         ) VALUES (
                           %(extraction_run_id)s, %(repository_id)s, %(discussion_id)s, %(thread_number)s,
                           %(source_type)s, %(title)s, %(associated_records)s, %(cleaned_content_length)s,
                           %(usable)s, %(decision_signal_detected)s, %(matched_rule)s, %(candidate_generated)s,
                           %(candidate_count)s, %(detected_signals)s, %(candidate_title)s, %(candidate_status)s,
-                          %(candidate_summary)s, %(evidence_references)s, %(schema_validation_result)s,
+                          %(candidate_summary)s, %(candidate_source_discussion_id)s, %(candidate_rationale)s,
+                          %(candidate_alternatives)s, %(candidate_tradeoffs)s, %(evidence_references)s,
+                          %(schema_validation_result)s,
                           %(semantic_validation_result)s, %(validation_errors)s, %(persistence_result)s,
-                          %(rejection_reason)s, %(outcome)s
+                          %(duplicate_match_type)s, %(matched_decision_id)s, %(matching_rationale)s,
+                          %(matched_decision_title)s, %(matched_decision_status)s,
+                          %(matched_decision_review_status)s, %(similarity_score)s,
+                          %(similarity_method)s, %(candidate_disposition)s,
+                          %(rejection_reason)s, %(outcome)s, %(model_response_id)s, %(input_tokens)s,
+                          %(output_tokens)s, %(total_tokens)s, %(retry_count)s
                         )
                         """,
                         {
                             **diagnostic,
                             "detected_signals": Jsonb(diagnostic["detected_signals"]),
+                            "candidate_rationale": Jsonb(diagnostic["candidate_rationale"]),
+                            "candidate_alternatives": Jsonb(diagnostic["candidate_alternatives"]),
+                            "candidate_tradeoffs": Jsonb(diagnostic["candidate_tradeoffs"]),
                             "evidence_references": Jsonb(diagnostic["evidence_references"]),
                             "validation_errors": Jsonb(diagnostic["validation_errors"]),
                         },
                     )
-            conn.execute(
+            completion_update = conn.execute(
                 """
                 UPDATE extraction_runs
                 SET status = 'completed', records_processed = %s,
@@ -491,44 +685,116 @@ def run_extraction(extraction_id: UUID, repository_id: UUID, force_reprocess: bo
                     threads_with_signals = %s, candidates_generated = %s,
                     candidates_rejected = %s, invalid_threads = %s,
                     no_decision_signal = %s, decisions_existing = %s,
-                    completed_at = NOW()
-                WHERE id = %s
+                    completed_at = clock_timestamp(),
+                    queue_duration_ms = CASE WHEN lock_acquired_at IS NOT NULL THEN (EXTRACT(EPOCH FROM (lock_acquired_at - COALESCE(queued_at, created_at))) * 1000)::integer END,
+                    inference_duration_ms = %s,
+                    model_calls_completed = %s, model_retry_count = %s,
+                    model_response_ids = %s
+                WHERE id = %s AND status = 'running'
+                RETURNING id
                 """,
                 (total_records, created, valid_threads, unusable_threads,
                  threads_with_signals, candidates_generated, candidates_rejected,
                  unusable_threads + candidates_rejected, no_decision_signal,
                  decisions_existing,
-                 extraction_id),
+                 int((time.monotonic() - inference_started) * 1000) if inference_started is not None else None,
+                 model_calls_completed, model_retry_count, Jsonb(model_response_ids), extraction_id),
             )
+            if not completion_update.fetchone():
+                conn.rollback()
+                return
             conn.execute(
-                "UPDATE extraction_runs SET model_revision = %s, prompt_tokens = %s, completion_tokens = %s, model_latency_ms = %s WHERE id = %s",
-                (model_revision, prompt_tokens or None, completion_tokens or None, model_latency_ms or None, extraction_id),
+                "UPDATE extraction_runs SET model_revision = %s, prompt_tokens = %s, completion_tokens = %s, model_total_tokens = %s, model_latency_ms = %s WHERE id = %s",
+                (
+                    model_revision,
+                    prompt_tokens if model_calls_completed and prompt_tokens_complete else None,
+                    completion_tokens if model_calls_completed and completion_tokens_complete else None,
+                    total_tokens if model_calls_completed and total_tokens_complete else None,
+                    model_latency_ms if model_calls_completed else None,
+                    extraction_id,
+                ),
             )
         except Exception as exc:
             conn.rollback()
             conn.execute(
-                "UPDATE extraction_runs SET status = 'failed', error_message = %s, completed_at = NOW() WHERE id = %s",
-                (str(exc)[:1000], extraction_id),
+                """
+                UPDATE extraction_runs SET status = 'failed', error_message = %s,
+                    failed_at = clock_timestamp(), completed_at = clock_timestamp(),
+                    queue_duration_ms = CASE WHEN lock_acquired_at IS NOT NULL THEN
+                      (EXTRACT(EPOCH FROM (lock_acquired_at - COALESCE(queued_at, created_at))) * 1000)::integer END,
+                    inference_duration_ms = %s, model_calls_completed = %s,
+                    model_retry_count = %s, model_response_ids = %s,
+                    model_revision = %s, prompt_tokens = %s, completion_tokens = %s,
+                    model_total_tokens = %s, model_latency_ms = %s
+                WHERE id = %s
+                """,
+                (
+                    str(exc)[:1000],
+                    int((time.monotonic() - inference_started) * 1000) if inference_started is not None else None,
+                    model_calls_completed, model_retry_count, Jsonb(model_response_ids), model_revision,
+                    prompt_tokens if model_calls_completed and prompt_tokens_complete else None,
+                    completion_tokens if model_calls_completed and completion_tokens_complete else None,
+                    total_tokens if model_calls_completed and total_tokens_complete else None,
+                    model_latency_ms if model_calls_completed else None,
+                    extraction_id,
+                ),
             )
         conn.commit()
 
 
-def _persist_candidate(conn: Connection, repository_id: UUID, candidate: object,
-                       outcome: object, force_reprocess: bool) -> str:
+def _extraction_cancelled(conn: Connection, extraction_id: UUID) -> bool:
     with conn.cursor() as cur:
-        source_discussion_id = candidate.source_discussion_id
-        if not force_reprocess:
-            cur.execute(
-                "SELECT 1 FROM decisions WHERE repository_id = %s AND source_discussion_id = %s AND extraction_version = 'prompt-v1' AND is_active = TRUE",
-                (repository_id, source_discussion_id),
+        cur.execute("SELECT status FROM extraction_runs WHERE id = %s", (extraction_id,))
+        row = cur.fetchone()
+    return bool(row and row["status"] == "cancelled")
+
+
+def _persist_candidate(conn: Connection, repository_id: UUID, candidate: object,
+                       outcome: object, extraction_model: str) -> CandidatePersistence:
+    if not isinstance(candidate, ExtractedDecision) or not isinstance(outcome, ValidationOutcome):
+        raise TypeError("candidate persistence requires a validated extraction result")
+    if candidate.repository_id != repository_id:
+        raise ValueError("candidate repository does not match extraction repository")
+    source_discussion_id = candidate.source_discussion_id
+    lock_repository(conn, repository_id)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT d.id, d.repository_id, d.source_discussion_id, d.title, d.summary,
+                   d.status, d.rationale, d.alternatives, d.tradeoffs,
+                   d.review_status, d.review_reason, d.is_active,
+                   COALESCE(
+                     array_agg(DISTINCT e.discussion_id)
+                       FILTER (WHERE e.discussion_id IS NOT NULL),
+                     ARRAY[]::uuid[]
+                   ) AS evidence_ids
+            FROM decisions d
+            LEFT JOIN decision_evidence e ON e.decision_id = d.id
+            WHERE d.repository_id = %s
+            GROUP BY d.id
+            """,
+            (repository_id,),
+        )
+        existing_decisions = cur.fetchall()
+        match = match_candidate(
+            candidate,
+            repository_id,
+            {evidence.source_id for evidence in outcome.evidence},
+            existing_decisions,
+        )
+        if match.is_duplicate:
+            return CandidatePersistence("matched_existing", match)
+
+        review_reason = outcome.review_reason
+        review_status = "pending" if outcome.review_status == "valid" else "needs_review"
+        disposition = "persisted" if review_status == "pending" else "persisted_for_review"
+        if match.requires_review:
+            review_status = "needs_review"
+            review_reason = (
+                f"{match.rationale} Matched existing decision "
+                f"{match.matched_decision_id}."
             )
-            if cur.fetchone():
-                return "existing"
-        else:
-            cur.execute(
-                "UPDATE decisions SET is_active = FALSE, updated_at = NOW() WHERE repository_id = %s AND source_discussion_id = %s AND extraction_version = 'prompt-v1' AND is_active = TRUE",
-                (repository_id, source_discussion_id),
-            )
+            disposition = "persisted_for_review"
         cur.execute(
             """
             INSERT INTO decisions (
@@ -540,9 +806,8 @@ def _persist_candidate(conn: Connection, repository_id: UUID, candidate: object,
             """,
             (repository_id, source_discussion_id, candidate.title, candidate.summary,
              candidate.status, Jsonb(candidate.rationale), Jsonb(candidate.alternatives),
-             Jsonb(candidate.tradeoffs), candidate.confidence, "deterministic-provider",
-                         "pending" if outcome.review_status == "valid" else "needs_review",
-                         outcome.review_reason),
+             Jsonb(candidate.tradeoffs), candidate.confidence, extraction_model,
+             review_status, review_reason),
         )
         decision_id = cur.fetchone()["id"]
         for evidence in outcome.evidence:
@@ -555,7 +820,7 @@ def _persist_candidate(conn: Connection, repository_id: UUID, candidate: object,
                 """,
                 (decision_id, evidence.source_id, evidence.evidence_role, evidence.quote),
             )
-    return "created"
+    return CandidatePersistence(disposition, match, decision_id)
 
 
 def _diagnostic(metadata: dict[str, object], extraction_id: UUID, repository_id: UUID,
@@ -580,11 +845,29 @@ def _diagnostic(metadata: dict[str, object], extraction_id: UUID, repository_id:
         "candidate_title": (details or {}).get("candidate_title"),
         "candidate_status": (details or {}).get("candidate_status"),
         "candidate_summary": (details or {}).get("candidate_summary"),
+        "candidate_source_discussion_id": (details or {}).get("candidate_source_discussion_id"),
+        "candidate_rationale": (details or {}).get("candidate_rationale", []),
+        "candidate_alternatives": (details or {}).get("candidate_alternatives", []),
+        "candidate_tradeoffs": (details or {}).get("candidate_tradeoffs", []),
         "evidence_references": (details or {}).get("evidence_references", []),
         "schema_validation_result": (details or {}).get("schema_validation_result"),
         "semantic_validation_result": (details or {}).get("semantic_validation_result"),
         "validation_errors": (details or {}).get("validation_errors", []),
         "persistence_result": (details or {}).get("persistence_result"),
+        "duplicate_match_type": (details or {}).get("duplicate_match_type"),
+        "matched_decision_id": (details or {}).get("matched_decision_id"),
+        "matched_decision_title": (details or {}).get("matched_decision_title"),
+        "matched_decision_status": (details or {}).get("matched_decision_status"),
+        "matched_decision_review_status": (details or {}).get("matched_decision_review_status"),
+        "matching_rationale": (details or {}).get("matching_rationale"),
+        "similarity_score": (details or {}).get("similarity_score"),
+        "similarity_method": (details or {}).get("similarity_method"),
+        "candidate_disposition": (details or {}).get("candidate_disposition"),
+        "model_response_id": (details or {}).get("model_response_id"),
+        "input_tokens": (details or {}).get("input_tokens"),
+        "output_tokens": (details or {}).get("output_tokens"),
+        "total_tokens": (details or {}).get("total_tokens"),
+        "retry_count": (details or {}).get("retry_count", 0),
         "rejection_reason": rejection_reason,
         "outcome": outcome,
         "usable": usable,
@@ -615,20 +898,44 @@ def start_extraction(repository_id: UUID, payload: ExtractionRequest, background
         if not cur.fetchone():
             raise error("NO_DISCUSSIONS", "Ingest discussions before extracting decisions.", 400)
         cur.execute(
-            "SELECT id FROM extraction_runs WHERE repository_id = %s AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",
+            """
+            UPDATE extraction_runs
+            SET status = 'failed', failed_at = clock_timestamp(), completed_at = clock_timestamp(),
+                queue_duration_ms = CASE WHEN lock_acquired_at IS NOT NULL THEN (EXTRACT(EPOCH FROM (lock_acquired_at - COALESCE(queued_at, created_at))) * 1000)::integer END,
+                inference_duration_ms = CASE WHEN started_at IS NOT NULL THEN (EXTRACT(EPOCH FROM (clock_timestamp() - started_at)) * 1000)::integer END,
+                error_message = 'stale extraction recovered by a subsequent request'
+            WHERE repository_id = %s
+              AND status IN ('queued', 'waiting_for_model', 'running')
+              AND COALESCE(started_at, queued_at, created_at) < NOW() - INTERVAL '10 minutes'
+            """,
+            (repository_id,),
+        )
+        cur.execute(
+            "SELECT id FROM extraction_runs WHERE repository_id = %s AND status IN ('queued', 'waiting_for_model', 'running') ORDER BY created_at DESC LIMIT 1",
             (repository_id,),
         )
         active_run = cur.fetchone()
         if active_run:
             raise error("EXTRACTION_IN_PROGRESS", "An extraction is already running for this repository.", 409)
         cur.execute(
-            "INSERT INTO extraction_runs (repository_id, status, prompt_version, model_provider, model_name) VALUES (%s, 'queued', 'prompt-v1', %s, %s) RETURNING id",
-            (repository_id, settings.model_provider, settings.model_name),
+            "INSERT INTO extraction_runs (repository_id, status, prompt_version, model_provider, model_name, queued_at) VALUES (%s, 'queued', 'prompt-v1', %s, %s, clock_timestamp()) RETURNING id",
+            (repository_id, settings.model_provider, settings.active_model_name),
         )
         extraction_id = cur.fetchone()["id"]
     conn.commit()
     background_tasks.add_task(run_extraction, extraction_id, repository_id, payload.force_reprocess)
     return ExtractionResponse(extraction_id=extraction_id, repository_id=repository_id, status="queued")
+
+
+@app.get("/api/v1/repositories/{repository_id}/extractions")
+def list_repository_extractions(repository_id: UUID, conn: Connection = Depends(get_connection)) -> dict:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM extraction_runs WHERE repository_id = %s ORDER BY created_at DESC LIMIT 20",
+            (repository_id,),
+        )
+        items = cur.fetchall()
+    return {"items": items, "total": len(items)}
 
 
 @app.get("/api/v1/extractions/{extraction_id}")
@@ -638,6 +945,20 @@ def get_extraction(extraction_id: UUID, conn: Connection = Depends(get_connectio
         result = cur.fetchone()
     if not result:
         raise error("EXTRACTION_NOT_FOUND", "The extraction run was not found.", 404)
+    return result
+
+
+@app.post("/api/v1/extractions/{extraction_id}/cancel")
+def cancel_extraction(extraction_id: UUID, conn: Connection = Depends(get_connection)) -> dict:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE extraction_runs SET status = 'cancelled', completed_at = clock_timestamp(), queue_duration_ms = COALESCE(queue_duration_ms, (EXTRACT(EPOCH FROM (clock_timestamp() - COALESCE(queued_at, created_at))) * 1000)::integer), inference_duration_ms = CASE WHEN started_at IS NOT NULL THEN (EXTRACT(EPOCH FROM (clock_timestamp() - started_at)) * 1000)::integer END, error_message = 'cancelled by request' WHERE id = %s AND status IN ('queued', 'waiting_for_model', 'running') RETURNING *",
+            (extraction_id,),
+        )
+        result = cur.fetchone()
+    if not result:
+        raise error("EXTRACTION_NOT_CANCELLABLE", "The extraction was not found or is already terminal.", 409)
+    conn.commit()
     return result
 
 
@@ -664,23 +985,6 @@ def get_extraction_diagnostics(extraction_id: UUID, conn: Connection = Depends(g
         )
         outcome_counts = {row["outcome"]: row["count"] for row in cur.fetchall()}
     summary = dict(summary)
-    unusable_count = sum(1 for item in items if not item["usable"])
-    candidate_count = sum(item["candidate_count"] for item in items)
-    rejected_count = sum(
-        item["candidate_count"]
-        for item in items
-        if item["outcome"] != "decision_created"
-    )
-    summary.update({
-        "valid_threads": len(items) - unusable_count,
-        "unusable_threads": unusable_count,
-        "threads_with_signals": sum(1 for item in items if item["decision_signal_detected"]),
-        "candidates_generated": candidate_count,
-        "candidates_rejected": rejected_count,
-        "invalid_threads": outcome_counts.get("invalid_thread", 0),
-        "no_decision_signal": outcome_counts.get("no_decision_signal", 0),
-        "decisions_created": outcome_counts.get("decision_created", 0),
-    })
     total = len(items)
     warning = None
     if summary["status"] == "completed" and total != summary["records_processed"]:
@@ -690,9 +994,21 @@ def get_extraction_diagnostics(extraction_id: UUID, conn: Connection = Depends(g
             "records_processed": summary["records_processed"],
             "total_diagnostics": total,
         }
-    candidate_diagnostics = [
-        item for item in items if item.get("candidate_generated", False) or item.get("candidate_count", 0) > 0
-    ]
+    candidate_diagnostics = _unique_candidate_diagnostics(items)
+    if "candidates_generated" not in summary:
+        summary["candidates_generated"] = len(candidate_diagnostics)
+    if "candidates_rejected" not in summary:
+        summary["candidates_rejected"] = sum(
+            1 for item in candidate_diagnostics
+            if item.get("candidate_disposition") in {"rejected", "failed"}
+            or item.get("semantic_validation_result") == "invalid"
+        )
+    if "decisions_created" not in summary:
+        summary["decisions_created"] = sum(
+            1 for item in candidate_diagnostics
+            if item.get("candidate_disposition") in {"persisted", "persisted_for_review"}
+            or item.get("outcome") == "decision_created"
+        )
     return {
         "summary": summary,
         "outcome_counts": outcome_counts,
@@ -704,6 +1020,21 @@ def get_extraction_diagnostics(extraction_id: UUID, conn: Connection = Depends(g
     }
 
 
+def _unique_candidate_diagnostics(items: list[dict]) -> list[dict]:
+    candidates: dict[tuple[object, ...], dict] = {}
+    for item in items:
+        if not item.get("candidate_generated", False) and item.get("candidate_count", 0) <= 0:
+            continue
+        response_id = item.get("model_response_id")
+        key = (
+            item.get("thread_number"),
+            response_id or item.get("candidate_title"),
+            response_id is None,
+        )
+        candidates.setdefault(key, item)
+    return list(candidates.values())
+
+
 @app.post("/api/v1/repositories/{repository_id}/decision-relationships/propose")
 def propose_decision_relationships(repository_id: UUID, conn: Connection = Depends(get_connection)) -> dict:
     with conn.cursor() as cur:
@@ -712,7 +1043,7 @@ def propose_decision_relationships(repository_id: UUID, conn: Connection = Depen
         for decision in decisions:
             cur.execute("SELECT id, evidence_excerpt, evidence_role FROM decision_evidence WHERE decision_id = %s", (decision["id"],))
             decision["evidence"] = cur.fetchall()
-    provider = build_provider(settings.model_provider, settings.model_name, settings.model_base_url, settings.model_api_key)
+    provider = _configured_provider()
     result = provider.propose_relationships([{**decision, "id": str(decision["id"]), "repository_id": str(repository_id), "evidence": [{**evidence, "id": str(evidence["id"])} for evidence in decision["evidence"]]} for decision in decisions])
     decisions_by_id = {decision["id"]: decision for decision in decisions}
     evidence_by_decision = {decision["id"]: {evidence["id"] for evidence in decision["evidence"]} for decision in decisions}

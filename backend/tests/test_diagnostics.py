@@ -88,6 +88,38 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(result["candidate"]["evidence_references"][0]["role"], "acceptance")
         self.assertEqual(result["warning"]["code"], "DIAGNOSTIC_PERSISTENCE_MISMATCH")
 
+    def test_candidate_summary_deduplicates_per_record_diagnostics_by_model_response(self) -> None:
+        extraction_id = uuid4()
+        summary = {
+            "id": extraction_id,
+            "status": "completed",
+            "records_processed": 2,
+            "candidates_generated": 1,
+            "decisions_created": 1,
+        }
+        diagnostic = {
+            "usable": True,
+            "decision_signal_detected": True,
+            "candidate_count": 1,
+            "candidate_generated": True,
+            "candidate_title": "Use pooling",
+            "candidate_status": "accepted",
+            "candidate_summary": "The team agreed to use pooling.",
+            "model_response_id": "response-1",
+            "thread_number": 42,
+            "outcome": "decision_created",
+        }
+
+        result = get_extraction_diagnostics(
+            extraction_id,
+            FakeConnection(summary, [diagnostic.copy(), diagnostic.copy()]),
+        )
+
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(len(result["candidate_diagnostics"]), 1)
+        self.assertEqual(result["summary"]["candidates_generated"], 1)
+        self.assertEqual(result["summary"]["decisions_created"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
