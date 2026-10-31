@@ -14,6 +14,14 @@ class StubOpenWeightProvider(OpenWeightLLMProvider):
         return self.response
 
 
+class UnavailableProvider(OpenWeightLLMProvider):
+    def __init__(self) -> None:
+        super().__init__("http://model.test", "Qwen3-14B")
+
+    def _request(self, method: str, path: str, body: dict[str, object] | None = None) -> dict[str, object]:
+        raise ProviderError("connection refused", "model_server")
+
+
 class ProviderTests(unittest.TestCase):
     def setUp(self) -> None:
         self.repository_id = uuid4()
@@ -43,6 +51,11 @@ class ProviderTests(unittest.TestCase):
         with self.assertRaises(ProviderError) as error:
             StubOpenWeightProvider(response).extract_decision(self.repository_id, [self.source])
         self.assertEqual(error.exception.stage, "schema_validation")
+
+    def test_model_server_unavailability_is_reported_by_health_check(self) -> None:
+        health = UnavailableProvider().health_check()
+        self.assertFalse(health["ok"])
+        self.assertEqual(health["error"], "connection refused")
 
 
 if __name__ == "__main__":
