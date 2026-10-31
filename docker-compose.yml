@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: metis
+      POSTGRES_USER: metis
+      POSTGRES_PASSWORD: metis
+    ports:
+      - "55432:5432"
+    volumes:
+      - metis-postgres:/var/lib/postgresql/data
+      - ./backend/migrations/001_initial.sql:/docker-entrypoint-initdb.d/001_initial.sql:ro
+      - ./backend/migrations/002_extraction.sql:/docker-entrypoint-initdb.d/002_extraction.sql:ro
+      - ./backend/migrations/003_extraction_diagnostics.sql:/docker-entrypoint-initdb.d/003_extraction_diagnostics.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U metis -d metis"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  metis-postgres:
