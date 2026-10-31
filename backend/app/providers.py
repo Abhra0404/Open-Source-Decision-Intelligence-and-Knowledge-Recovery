@@ -139,7 +139,14 @@ class OpenWeightLLMProvider:
             "URLs, authors, or evidence. Use status accepted only with explicit acceptance, rejected "
             "only with explicit rejection, otherwise proposed or unresolved. Return fields title, summary, "
             "status, rationale, alternatives, tradeoffs, confidence, evidence, repository_id, "
-            "source_discussion_id. Evidence roles are proposal, support, objection, acceptance, rejection, context.\n\n"
+            "source_discussion_id. Evidence roles are proposal, support, objection, acceptance, rejection, context. "
+            "Use arrays for rationale, alternatives, and tradeoffs, even when empty. Evidence keys must be "
+            "exactly source_id, source_type, source_url, quote, author, created_at, evidence_role; do not use "
+            "discussion_id or role. Use UUID strings for source_id and repository_id, and null for unknown author "
+            "or created_at. Return exactly this shape: {title: string, summary: string, status: accepted|rejected|proposed|unresolved, "
+            "rationale: [], alternatives: [], tradeoffs: [], confidence: number|null, evidence: [{source_id: UUID, "
+            "source_type: string, source_url: string, quote: string, author: string|null, created_at: string|null, "
+            "evidence_role: string}], repository_id: UUID, source_discussion_id: UUID}.\n\n"
             f"repository_id: {repository_id}\nSOURCES:\n{json.dumps(sources, ensure_ascii=True)}"
         )
 

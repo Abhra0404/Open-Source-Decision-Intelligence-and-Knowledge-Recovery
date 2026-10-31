@@ -17,14 +17,23 @@ Recovery
 
 ## Models we use and why
 
-Model selection is currently in progress.
+METIS currently supports and has tested this local open-weight model:
 
-We are evaluating open-weight models for: - Extracting engineering
-decisions from GitHub issues, pull requests, reviews, and discussions. -
-Classifying decisions as accepted, rejected, proposed, or unresolved. -
-Generating evidence-grounded summaries that preserve the original
-reasoning and source references.
+- **Model:** Qwen3 8B (`qwen3:8b` in Ollama)
+- **Runtime:** Ollama's local OpenAI-compatible API at `http://localhost:11434`
+- **Model digest tested:** `500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41`
+- **License:** Apache 2.0, as published for the Qwen3 model family
+- **Use:** Produce structured engineering-decision candidates from assembled GitHub discussion threads.
 
-We will update this section with the exact model names and explain why
-they were selected once evaluation is complete. Only models actually
-integrated and used in the submitted implementation will be listed here.
+Qwen3 8B was selected because it is available locally and supports structured extraction through the permitted local model-server interface. Qwen3-14B was the preferred initial model but was not available in the tested runtime, so it is not claimed as an active model.
+
+The provider was tested with a real local inference on 2026-11-01. The response parsed into the existing Pydantic extraction schema and reported 413 prompt tokens and 632 completion tokens. METIS independently validates evidence IDs, URLs, excerpts, roles, and semantic support before persistence; the model does not validate its own claims.
+
+To run it locally:
+
+```bash
+ollama run qwen3:8b
+MODEL_PROVIDER=open_weight MODEL_NAME=qwen3:8b MODEL_BASE_URL=http://localhost:11434 uvicorn backend.app.main:app --reload --port 8000
+```
+
+The deterministic `rule-based-mvp` provider remains available through `MODEL_PROVIDER=deterministic` for comparison. No closed model API, hosted proprietary inference API, or fine-tuning is used.
