@@ -56,6 +56,11 @@ type DecisionDetail = Decision & {
   }>;
 };
 
+type ChatMessage = { id: string; role: "user" | "assistant"; content: string; created_at: string; sources?: Array<{ evidence_id: string; evidence_role: string; excerpt: string | null; source_url: string }> };
+type ChatConversation = { id: string; title: string; updated_at: string; messages?: ChatMessage[] };
+type EvolutionNode = { id: string; title: string; summary: string; status: string; review_status: string; extracted_at: string };
+type EvolutionEdge = { id: string; source_decision_id: string; target_decision_id: string; relationship_type: string; explanation: string; confidence: number; review_status: string; evidence_ids: string[] };
+
 type ExtractionSummary = {
   records_processed: number;
   valid_threads: number;
@@ -107,7 +112,7 @@ type Diagnostic = {
   persistence_result?: string | null;
 };
 
-type View = "overview" | "decisions" | "discussions" | "diagnostics";
+type View = "overview" | "decisions" | "discussions" | "diagnostics" | "intelligence" | "evolution";
 
 /* ── Sidebar ────────────────────────────────────────────── */
 
@@ -158,6 +163,20 @@ function Sidebar({
           )}
         </button>
         <button
+          className={`nav-item ${view === "evolution" ? "active" : ""}`}
+          onClick={() => setView("evolution")}
+        >
+          <span className="nav-icon">⌁</span>
+          Decision Evolution
+        </button>
+        <button
+          className={`nav-item ${view === "intelligence" ? "active" : ""}`}
+          onClick={() => setView("intelligence")}
+        >
+          <span className="nav-icon">◌</span>
+          Decision Intelligence
+        </button>
+        <button
           className={`nav-item ${view === "diagnostics" ? "active" : ""}`}
           onClick={() => setView("diagnostics")}
         >
@@ -178,6 +197,111 @@ function Sidebar({
         </a>
       </div>
     </aside>
+  );
+}
+
+function EvolutionPanel({ repositoryId }: { repositoryId: string }) {
+  const [nodes, setNodes] = useState<EvolutionNode[]>([]);
+  const [edges, setEdges] = useState<EvolutionEdge[]>([]);
+  const [includePending, setIncludePending] = useState(true);
+  const [relationshipType, setRelationshipType] = useState("all");
+  const [selected, setSelected] = useState<EvolutionNode | EvolutionEdge | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [zoom, setZoom] = useState(1);
+
+  async function loadGraph() {
+    if (!repositoryId) return;
+    setLoading(true);
+    const query = new URLSearchParams({ include_pending: String(includePending) });
+    if (relationshipType !== "all") query.set("relationship_type", relationshipType);
+    try {
+      const data = await fetch(`${API}/repositories/${repositoryId}/decision-graph?${query}`).then((response) => response.json());
+      setNodes(data.nodes ?? []); setEdges(data.edges ?? []);
+    } finally { setLoading(false); }
+  }
+  useEffect(() => { loadGraph(); }, [repositoryId, includePending, relationshipType]);
+  const positions = new Map(nodes.map((node, index) => [node.id, { x: 120 + (index % 3) * 260, y: 80 + Math.floor(index / 3) * 150 }]));
+  async function reviewRelationship(action: string) {
+    if (!selected || !("relationship_type" in selected)) return;
+    await fetch(`${API}/decision-relationships/${selected.id}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, note: window.prompt("Optional reviewer note:") ?? undefined }) });
+    setSelected(null); loadGraph();
+  }
+
+  return <div className="evolution-panel">
+    <div className="panel-header"><div><h2>Decision Evolution</h2><p className="chat-subtitle">Trace how technical direction changes over time.</p></div><div className="panel-actions"><label className="toggle-label"><input type="checkbox" checked={includePending} onChange={(event) => setIncludePending(event.target.checked)} /> Pending</label><select value={relationshipType} onChange={(event) => setRelationshipType(event.target.value)}><option value="all">All relationships</option><option value="supersedes">Supersedes</option><option value="refines">Refines</option><option value="depends_on">Depends on</option><option value="contradicts">Contradicts</option><option value="related_to">Related to</option></select></div></div>
+    {loading ? <div className="panel-empty"><span className="spinner" /> Loading evolution...</div> : <>
+      <div className="evolution-graph"><div className="graph-controls"><button className="btn btn-ghost btn-sm" onClick={() => setZoom((value) => Math.min(1.8, value + .1))}>+</button><button className="btn btn-ghost btn-sm" onClick={() => setZoom((value) => Math.max(.6, value - .1))}>−</button><button className="btn btn-ghost btn-sm" onClick={() => setZoom(1)}>Reset</button></div><svg style={{ transform: `scale(${zoom})`, transformOrigin: "top left" }} viewBox={`0 0 ${Math.max(900, 120 + (nodes.length % 3) * 260)} ${Math.max(360, 140 + Math.ceil(nodes.length / 3) * 150)}`} role="img" aria-label="Decision relationship graph">
+        {edges.map((edge) => { const source = positions.get(edge.source_decision_id); const target = positions.get(edge.target_decision_id); return source && target ? <g key={edge.id} onClick={() => setSelected(edge)} className={`graph-edge ${edge.review_status}`}><line x1={source.x} y1={source.y} x2={target.x} y2={target.y} /><text x={(source.x + target.x) / 2} y={(source.y + target.y) / 2 - 6}>{edge.relationship_type}</text></g> : null; })}
+        {nodes.map((node) => { const point = positions.get(node.id); return point ? <g key={node.id} onClick={() => setSelected(node)} className="graph-node"><circle cx={point.x} cy={point.y} r="34" /><text x={point.x} y={point.y + 52}>{node.title.slice(0, 28)}</text></g> : null; })}
+      </svg></div>
+      <div className="evolution-timeline">{nodes.map((node) => <button className="timeline-entry" key={node.id} onClick={() => setSelected(node)}><time>{new Date(node.extracted_at).toLocaleDateString()}</time><strong>{node.title}</strong><span className={`badge badge-${node.status}`}>{node.status}</span><span className="badge badge-neutral">{node.review_status}</span></button>)}</div>
+    </>}
+    {selected && <div className="evolution-selection"><button className="btn btn-ghost btn-sm" onClick={() => setSelected(null)}>Close</button>{"relationship_type" in selected ? <><h3>{selected.relationship_type}</h3><p>{selected.explanation}</p><p>Confidence: {Math.round(selected.confidence * 100)}% · Review: {selected.review_status}</p><p>Evidence: {selected.evidence_ids.join(", ") || "None"}</p><div className="action-row"><button className="btn btn-primary btn-sm" onClick={() => reviewRelationship("approve")}>Approve</button><button className="btn btn-ghost btn-sm" onClick={() => reviewRelationship("reject")}>Reject</button><button className="btn btn-ghost btn-sm" onClick={() => reviewRelationship("request_review")}>Request review</button></div></> : <><h3>{selected.title}</h3><p>{selected.summary}</p><p>{selected.status} · {selected.review_status}</p></>}</div>}
+  </div>;
+}
+
+function IntelligencePanel({ repositoryId }: { repositoryId: string }) {
+  const [conversations, setConversations] = useState<ChatConversation[]>([]);
+  const [conversation, setConversation] = useState<ChatConversation | null>(null);
+  const [question, setQuestion] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const suggestions = ["Why was this architecture selected?", "What alternatives were considered?", "Which decisions were rejected?", "What decisions are still unresolved?", "Has a decision been superseded?"];
+
+  async function loadConversations() {
+    if (!repositoryId) return;
+    const data = await fetch(`${API}/repositories/${repositoryId}/chat/conversations`).then((response) => response.json());
+    setConversations(data.items ?? []);
+  }
+
+  async function openConversation(id: string) {
+    const data = await fetch(`${API}/chat/conversations/${id}`).then((response) => response.json());
+    setConversation(data);
+  }
+
+  async function newConversation() {
+    const data = await fetch(`${API}/repositories/${repositoryId}/chat/conversations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) }).then((response) => response.json());
+    setConversations((current) => [data, ...current]);
+    setConversation({ ...data, messages: [] });
+  }
+
+  async function sendQuestion(event?: FormEvent) {
+    event?.preventDefault();
+    if (!question.trim() || !conversation || loading) return;
+    setLoading(true);
+    setErrorMessage("");
+    try {
+      const response = await fetch(`${API}/chat/conversations/${conversation.id}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: question.trim() }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail?.error?.message ?? "Could not answer question");
+      setConversation((current) => current ? { ...current, messages: [...(current.messages ?? []), { id: data.user_message_id, role: "user", content: question.trim(), created_at: new Date().toISOString() }, data.message] } : current);
+      setQuestion("");
+      loadConversations();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Could not answer question");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { setConversation(null); loadConversations(); }, [repositoryId]);
+
+  return (
+    <div className="intelligence-layout">
+      <aside className="conversation-sidebar">
+        <div className="panel-header"><h2>Conversations</h2><button className="btn btn-primary btn-sm" onClick={newConversation} disabled={!repositoryId}>New</button></div>
+        {conversations.map((item) => <button className={`conversation-item ${conversation?.id === item.id ? "selected" : ""}`} key={item.id} onClick={() => openConversation(item.id)}>{item.title}</button>)}
+        {conversations.length === 0 && <p className="panel-empty">No conversations yet.</p>}
+      </aside>
+      <section className="chat-panel">
+        <div className="panel-header"><div><h2>Decision Intelligence</h2><p className="chat-subtitle">Ask about the engineering history of the selected repository.</p></div></div>
+        {!conversation ? <div className="chat-empty"><h3>Grounded repository Q&A</h3><p>Answers cite retrieved decisions and original GitHub evidence. Select a suggestion to begin.</p><div className="suggestions">{suggestions.map((item) => <button className="btn btn-ghost" key={item} onClick={() => { newConversation(); setQuestion(item); }}>{item}</button>)}</div></div> : <>
+          <div className="chat-messages">{(conversation.messages ?? []).map((message) => <div className={`chat-message ${message.role}`} key={message.id}><span className="chat-role">{message.role}</span><p>{message.content}</p>{message.sources?.map((source) => <a className="chat-source" key={source.evidence_id} href={source.source_url} target="_blank" rel="noreferrer">[{source.evidence_id}] {source.evidence_role}: {source.excerpt ?? "Open source evidence"} ↗</a>)}</div>)}</div>
+          <form className="chat-composer" onSubmit={sendQuestion}><input aria-label="Ask a repository question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about a decision, alternative, or trade-off..." /><button className="btn btn-primary" disabled={loading}>{loading ? "Answering..." : "Ask"}</button></form>
+        </>}
+        {errorMessage && <div className="connect-status has-msg">{errorMessage}</div>}
+      </section>
+    </div>
   );
 }
 
@@ -670,6 +794,10 @@ export default function Home() {
         return <DecisionsPanel decisions={decisions} onRefresh={loadDecisions} />;
       case "discussions":
         return <DiscussionsPanel discussions={discussions} />;
+      case "intelligence":
+        return <IntelligencePanel repositoryId={repositoryId} />;
+      case "evolution":
+        return <EvolutionPanel repositoryId={repositoryId} />;
       case "diagnostics":
         return (
           <DiagnosticsPanel
@@ -731,6 +859,8 @@ export default function Home() {
     decisions: "Engineering Decisions",
     discussions: "Source Discussions",
     diagnostics: "Extraction Diagnostics",
+    intelligence: "Decision Intelligence",
+    evolution: "Decision Evolution",
   };
 
   return (

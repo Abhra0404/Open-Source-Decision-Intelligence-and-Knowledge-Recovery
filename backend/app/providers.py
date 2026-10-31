@@ -10,6 +10,7 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from .extraction import DiscussionInput, ExtractedDecision, extract_candidate
+from .relationships import RelationshipProposal
 
 
 class ProviderError(RuntimeError):
@@ -29,10 +30,31 @@ class ProviderResult:
     latency_ms: int | None = None
 
 
+@dataclass(frozen=True)
+class AnswerResult:
+    answer: str
+    citations: list[str]
+    provider: str
+    model: str
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    latency_ms: int | None = None
+
+
+@dataclass(frozen=True)
+class RelationshipResult:
+    proposals: list[RelationshipProposal]
+    provider: str
+    model: str
+    latency_ms: int | None = None
+
+
 class ExtractionProvider(Protocol):
     def extract_decision(self, repository_id: UUID, records: list[DiscussionInput]) -> ProviderResult: ...
     def health_check(self) -> dict[str, object]: ...
     def get_model_info(self) -> dict[str, object]: ...
+    def answer_question(self, question: str, history: list[dict[str, str]], context: list[dict[str, object]]) -> AnswerResult: ...
+    def propose_relationships(self, decisions: list[dict[str, object]]) -> RelationshipResult: ...
 
 
 class DeterministicProvider:
@@ -51,6 +73,20 @@ class DeterministicProvider:
 
     def get_model_info(self) -> dict[str, object]:
         return {"provider": "deterministic", "model": "rule-based-mvp", "revision": None}
+
+    def answer_question(self, question: str, history: list[dict[str, str]], context: list[dict[str, object]]) -> AnswerResult:
+        started = time.monotonic()
+        if not context:
+            answer = "I couldn't find sufficient evidence in this repository to answer that question."
+            citations: list[str] = []
+        else:
+            lines = [f"Based on the retrieved repository evidence, {item['summary']} [{item['evidence_id']}]" for item in context[:3]]
+            answer = " ".join(lines)
+            citations = [str(item["evidence_id"]) for item in context[:3]]
+        return AnswerResult(answer, citations, "deterministic", "rule-based-mvp", latency_ms=int((time.monotonic() - started) * 1000))
+
+    def propose_relationships(self, decisions: list[dict[str, object]]) -> RelationshipResult:
+        return RelationshipResult([], "deterministic", "rule-based-mvp", 0)
 
 
 class OpenWeightLLMProvider:
@@ -78,6 +114,8 @@ class OpenWeightLLMProvider:
         response = self._request("POST", "/v1/chat/completions", {
             "model": self.model,
             "temperature": 0,
+            "max_tokens": 800,
+            "think": False,
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": "You extract engineering decisions. Return JSON only."},
@@ -100,6 +138,62 @@ class OpenWeightLLMProvider:
             completion_tokens=usage.get("completion_tokens"),
             latency_ms=int((time.monotonic() - started) * 1000),
         )
+
+    def answer_question(self, question: str, history: list[dict[str, str]], context: list[dict[str, object]]) -> AnswerResult:
+        started = time.monotonic()
+        prompt = {
+            "question": question,
+            "history": history[-6:],
+            "evidence": context,
+            "rules": [
+                "Use only the supplied evidence.",
+                "Cite factual claims with evidence_id values from the supplied evidence.",
+                "If evidence is insufficient, say exactly: I couldn't find sufficient evidence in this repository to answer that question.",
+                "Return JSON with exactly answer (string) and citations (array of evidence_id strings).",
+            ],
+        }
+        response = self._request("POST", "/v1/chat/completions", {
+            "model": self.model, "max_tokens": 600, "think": False,
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": "You answer repository-history questions using only cited evidence."},
+                {"role": "user", "content": json.dumps(prompt, ensure_ascii=True)},
+            ],
+        })
+        try:
+            content = response["choices"][0]["message"]["content"]
+            payload = self._parse_json(content)
+            answer = payload["answer"]
+            citations = payload["citations"]
+            if not isinstance(answer, str) or not isinstance(citations, list) or not all(isinstance(item, str) for item in citations):
+                raise ValueError("answer must be a string and citations must be string IDs")
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError, ValueError) as exc:
+            raise ProviderError(f"open-weight answer was not valid JSON: {exc}", "qa_schema_validation") from exc
+        usage = response.get("usage", {})
+        return AnswerResult(answer, citations, "open_weight", self.model, usage.get("prompt_tokens"), usage.get("completion_tokens"), int((time.monotonic() - started) * 1000))
+
+    def propose_relationships(self, decisions: list[dict[str, object]]) -> RelationshipResult:
+        started = time.monotonic()
+        prompt = {
+            "decisions": decisions,
+            "rules": [
+                "Propose only relationships supported by supplied decision evidence.",
+                "Do not infer supersession from shared technology or timestamps alone.",
+                "Return JSON with a relationships array; each item must contain source_decision_id, target_decision_id, relationship_type, explanation, evidence_ids, confidence.",
+            ],
+        }
+        response = self._request("POST", "/v1/chat/completions", {
+            "model": self.model, "temperature": 0, "max_tokens": 600, "think": False, "response_format": {"type": "json_object"},
+            "messages": [{"role": "system", "content": "You propose evidence-grounded decision relationships. Return JSON only."}, {"role": "user", "content": json.dumps(prompt, ensure_ascii=True)}],
+        })
+        try:
+            content = response["choices"][0]["message"]["content"]
+            payload = self._parse_json(content)
+            proposals = [RelationshipProposal.model_validate(item) for item in payload.get("relationships", [])]
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError, ValidationError, ValueError) as exc:
+            raise ProviderError(f"open-weight relationship output was invalid: {exc}", "relationship_schema_validation") from exc
+        return RelationshipResult(proposals, "open_weight", self.model, int((time.monotonic() - started) * 1000))
 
     def _request(self, method: str, path: str, body: dict[str, object] | None = None) -> dict[str, object]:
         request = Request(self.base_url + path, method=method)
@@ -125,14 +219,21 @@ class OpenWeightLLMProvider:
 
     @staticmethod
     def _prompt(repository_id: UUID, records: list[DiscussionInput]) -> str:
-        sources = [{
-            "discussion_id": str(record.id),
-            "source_type": record.source_type,
-            "title": record.title,
-            "body": record.body,
-            "author_login": record.author_login,
-            "source_url": record.source_url,
-        } for record in records]
+        sources = []
+        remaining_chars = 9000
+        for record in records:
+            if remaining_chars <= 0:
+                break
+            body = record.body[:min(2400, remaining_chars)]
+            sources.append({
+                "discussion_id": str(record.id),
+                "source_type": record.source_type,
+                "title": record.title,
+                "body": body,
+                "author_login": record.author_login,
+                "source_url": record.source_url,
+            })
+            remaining_chars -= len(body)
         return (
             "Extract one candidate from this exact discussion thread. Every evidence item must copy "
             "a discussion_id, source_url, and quote from the supplied sources. Do not invent claims, "

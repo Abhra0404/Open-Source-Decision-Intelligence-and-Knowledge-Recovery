@@ -9,11 +9,13 @@ from psycopg.types.json import Jsonb
 from .database import connection, get_connection, lock_repository
 from .github import GitHubClient, GitHubError
 from .cleaning import clean_discussion
+from .chat import answer_question as generate_chat_answer, validate_citations
 from .extraction import DiscussionInput, assess_candidate, detect_decision_signals
 from .ingestion import ingest_repository, parse_repository_url
 from .config import settings
 from .providers import ProviderError, build_provider
-from .schemas import ExtractionRequest, ExtractionResponse, IngestionCreate, IngestionResponse, RepositoryCreate, RepositoryResponse, ReviewRequest, SearchRequest
+from .relationships import RelationshipProposal, validate_relationship
+from .schemas import ChatMessageCreate, ConversationCreate, ExtractionRequest, ExtractionResponse, IngestionCreate, IngestionResponse, RelationshipReviewRequest, RepositoryCreate, RepositoryResponse, ReviewRequest, SearchRequest
 
 app = FastAPI(title="METIS API", version="0.1.0")
 app.add_middleware(
@@ -42,6 +44,117 @@ def list_repositories(conn: Connection = Depends(get_connection)) -> dict:
         cur.execute("SELECT id, full_name, html_url FROM repositories ORDER BY full_name")
         items = cur.fetchall()
     return {"items": items, "total": len(items)}
+
+
+@app.post("/api/v1/repositories/{repository_id}/chat/conversations")
+def create_chat_conversation(repository_id: UUID, payload: ConversationCreate, conn: Connection = Depends(get_connection)) -> dict:
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM repositories WHERE id = %s", (repository_id,))
+        if not cur.fetchone():
+            raise error("REPOSITORY_NOT_FOUND", "The repository is not registered.", 404)
+        cur.execute(
+            "INSERT INTO chat_conversations (repository_id, title) VALUES (%s, %s) RETURNING *",
+            (repository_id, payload.title),
+        )
+        conversation = cur.fetchone()
+    conn.commit()
+    return conversation
+
+
+@app.get("/api/v1/repositories/{repository_id}/chat/conversations")
+def list_chat_conversations(repository_id: UUID, conn: Connection = Depends(get_connection)) -> dict:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM chat_conversations WHERE repository_id = %s ORDER BY updated_at DESC", (repository_id,))
+        items = cur.fetchall()
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/api/v1/chat/conversations/{conversation_id}")
+def get_chat_conversation(conversation_id: UUID, conn: Connection = Depends(get_connection)) -> dict:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM chat_conversations WHERE id = %s", (conversation_id,))
+        conversation = cur.fetchone()
+        if not conversation:
+            raise error("CONVERSATION_NOT_FOUND", "The conversation was not found.", 404)
+        cur.execute("SELECT * FROM chat_messages WHERE conversation_id = %s ORDER BY created_at", (conversation_id,))
+        messages = cur.fetchall()
+        for message in messages:
+            cur.execute(
+                "SELECT de.id AS evidence_id, d.id AS decision_id, d.source_discussion_id, d.status AS decision_status, d.review_status, de.evidence_role, de.evidence_excerpt AS excerpt, source.source_url FROM chat_message_sources cms JOIN decision_evidence de ON de.id = cms.evidence_id JOIN decisions d ON d.id = de.decision_id JOIN discussions source ON source.id = de.discussion_id WHERE cms.message_id = %s",
+                (message["id"],),
+            )
+            message["sources"] = cur.fetchall()
+        conversation["messages"] = messages
+    return conversation
+
+
+@app.get("/api/v1/chat/conversations/{conversation_id}/messages")
+def list_chat_messages(conversation_id: UUID, conn: Connection = Depends(get_connection)) -> dict:
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM chat_conversations WHERE id = %s", (conversation_id,))
+        if not cur.fetchone():
+            raise error("CONVERSATION_NOT_FOUND", "The conversation was not found.", 404)
+        cur.execute("SELECT * FROM chat_messages WHERE conversation_id = %s ORDER BY created_at", (conversation_id,))
+        items = cur.fetchall()
+        for message in items:
+            cur.execute(
+                "SELECT de.id AS evidence_id, de.evidence_role, de.evidence_excerpt AS excerpt, source.source_url FROM chat_message_sources cms JOIN decision_evidence de ON de.id = cms.evidence_id JOIN discussions source ON source.id = de.discussion_id WHERE cms.message_id = %s",
+                (message["id"],),
+            )
+            message["sources"] = cur.fetchall()
+    return {"items": items, "total": len(items)}
+
+
+@app.post("/api/v1/chat/conversations/{conversation_id}/messages")
+def create_chat_message(conversation_id: UUID, payload: ChatMessageCreate, conn: Connection = Depends(get_connection)) -> dict:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM chat_conversations WHERE id = %s FOR UPDATE", (conversation_id,))
+        conversation = cur.fetchone()
+        if not conversation:
+            raise error("CONVERSATION_NOT_FOUND", "The conversation was not found.", 404)
+        cur.execute("SELECT role, content FROM chat_messages WHERE conversation_id = %s ORDER BY created_at DESC LIMIT 6", (conversation_id,))
+        history = list(reversed(cur.fetchall()))
+    try:
+        answer, retrieved, retrieval_latency = generate_chat_answer(
+            conn, conversation["repository_id"], payload.content, history,
+        )
+        cited_sources = validate_citations(conn, conversation["repository_id"], retrieved, answer.citations)
+        if answer.citations and len(cited_sources) != len(dict.fromkeys(answer.citations)):
+            answer = answer.__class__(
+                "I couldn't find sufficient evidence in this repository to answer that question.",
+                [], answer.provider, answer.model, answer.prompt_tokens, answer.completion_tokens, answer.latency_ms,
+            )
+            cited_sources = []
+        elif retrieved and not answer.citations:
+            answer = answer.__class__(
+                "I couldn't find sufficient evidence in this repository to answer that question.",
+                [], answer.provider, answer.model, answer.prompt_tokens, answer.completion_tokens, answer.latency_ms,
+            )
+    except Exception as exc:
+        conn.rollback()
+        raise error("CHAT_GENERATION_FAILED", str(exc)[:500], 502) from exc
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO chat_messages (conversation_id, role, content) VALUES (%s, 'user', %s) RETURNING id", (conversation_id, payload.content))
+        user_message_id = cur.fetchone()["id"]
+        cur.execute(
+            """
+            INSERT INTO chat_messages
+              (conversation_id, role, content, provider, model_name,
+               retrieval_latency_ms, generation_latency_ms,
+               retrieved_evidence_count, citation_count)
+            VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (conversation_id, answer.answer, answer.provider, answer.model,
+             retrieval_latency, answer.latency_ms, len(retrieved), len(cited_sources)),
+        )
+        assistant_message = cur.fetchone()
+        for source in cited_sources:
+            cur.execute("INSERT INTO chat_message_sources (message_id, evidence_id) VALUES (%s, %s)", (assistant_message["id"], source["evidence_id"]))
+        cur.execute("UPDATE chat_conversations SET updated_at = NOW() WHERE id = %s", (conversation_id,))
+    conn.commit()
+    assistant_message["sources"] = cited_sources
+    return {"user_message_id": user_message_id, "message": assistant_message, "sources": cited_sources}
 
 
 @app.post("/api/v1/repositories", response_model=RepositoryResponse, status_code=201)
@@ -578,7 +691,7 @@ def get_extraction_diagnostics(extraction_id: UUID, conn: Connection = Depends(g
             "total_diagnostics": total,
         }
     candidate_diagnostics = [
-        item for item in items if item["candidate_generated"]
+        item for item in items if item.get("candidate_generated", False) or item.get("candidate_count", 0) > 0
     ]
     return {
         "summary": summary,
@@ -589,6 +702,112 @@ def get_extraction_diagnostics(extraction_id: UUID, conn: Connection = Depends(g
         "total": total,
         "warning": warning,
     }
+
+
+@app.post("/api/v1/repositories/{repository_id}/decision-relationships/propose")
+def propose_decision_relationships(repository_id: UUID, conn: Connection = Depends(get_connection)) -> dict:
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, repository_id, title, summary, status, review_status, extracted_at FROM decisions WHERE repository_id = %s AND is_active = TRUE ORDER BY extracted_at DESC LIMIT 20", (repository_id,))
+        decisions = cur.fetchall()
+        for decision in decisions:
+            cur.execute("SELECT id, evidence_excerpt, evidence_role FROM decision_evidence WHERE decision_id = %s", (decision["id"],))
+            decision["evidence"] = cur.fetchall()
+    provider = build_provider(settings.model_provider, settings.model_name, settings.model_base_url, settings.model_api_key)
+    result = provider.propose_relationships([{**decision, "id": str(decision["id"]), "repository_id": str(repository_id), "evidence": [{**evidence, "id": str(evidence["id"])} for evidence in decision["evidence"]]} for decision in decisions])
+    decisions_by_id = {decision["id"]: decision for decision in decisions}
+    evidence_by_decision = {decision["id"]: {evidence["id"] for evidence in decision["evidence"]} for decision in decisions}
+    created = []
+    with conn.cursor() as cur:
+        for proposal in result.proposals:
+            valid_evidence = evidence_by_decision.get(proposal.source_decision_id, set()) | evidence_by_decision.get(proposal.target_decision_id, set())
+            reason = validate_relationship(proposal, repository_id, decisions_by_id, valid_evidence)
+            if reason:
+                continue
+            cur.execute(
+                """
+                INSERT INTO decision_relationships
+                  (repository_id, source_decision_id, target_decision_id, relationship_type,
+                   explanation, evidence_ids, confidence, review_status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
+                ON CONFLICT (source_decision_id, target_decision_id, relationship_type) DO NOTHING
+                RETURNING *
+                """,
+                (repository_id, proposal.source_decision_id, proposal.target_decision_id,
+                 proposal.relationship_type.value, proposal.explanation, Jsonb([str(item) for item in proposal.evidence_ids]), proposal.confidence),
+            )
+            row = cur.fetchone()
+            if row:
+                created.append(row)
+    conn.commit()
+    return {"items": created, "total": len(created), "provider": result.provider, "model": result.model}
+
+
+@app.get("/api/v1/repositories/{repository_id}/decision-timeline")
+def get_decision_timeline(repository_id: UUID, date_from: str | None = None, date_to: str | None = None,
+                          status: str | None = None, relationship_type: str | None = None,
+                          limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0),
+                          conn: Connection = Depends(get_connection)) -> dict:
+    conditions = ["d.repository_id = %s", "d.is_active = TRUE"]
+    params: list[object] = [repository_id]
+    if date_from:
+        conditions.append("d.extracted_at >= %s")
+        params.append(date_from)
+    if date_to:
+        conditions.append("d.extracted_at <= %s")
+        params.append(date_to)
+    if status:
+        conditions.append("d.status = %s")
+        params.append(status)
+    if relationship_type:
+        conditions.append("EXISTS (SELECT 1 FROM decision_relationships filter_rel WHERE filter_rel.repository_id = d.repository_id AND (filter_rel.source_decision_id = d.id OR filter_rel.target_decision_id = d.id) AND filter_rel.relationship_type = %s)")
+        params.append(relationship_type)
+    where = " AND ".join(conditions)
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT d.*, r.full_name AS repository_name, (SELECT MIN(source.source_created_at) FROM decision_evidence timeline_evidence JOIN discussions source ON source.id = timeline_evidence.discussion_id WHERE timeline_evidence.decision_id = d.id) AS original_source_date FROM decisions d JOIN repositories r ON r.id = d.repository_id WHERE {where} ORDER BY d.extracted_at ASC LIMIT %s OFFSET %s", [*params, limit, offset])
+        items = cur.fetchall()
+        for item in items:
+            cur.execute("SELECT rel.*, sd.title AS source_title, td.title AS target_title FROM decision_relationships rel JOIN decisions sd ON sd.id = rel.source_decision_id JOIN decisions td ON td.id = rel.target_decision_id WHERE rel.repository_id = %s AND (rel.source_decision_id = %s OR rel.target_decision_id = %s)", (repository_id, item["id"], item["id"]))
+            item["relationships"] = cur.fetchall()
+    return {"items": items, "total": len(items), "limit": limit, "offset": offset}
+
+
+@app.get("/api/v1/repositories/{repository_id}/decision-graph")
+def get_decision_graph(repository_id: UUID, include_pending: bool = False, status: str | None = None,
+                       relationship_type: str | None = None, conn: Connection = Depends(get_connection)) -> dict:
+    decision_conditions = ["repository_id = %s", "is_active = TRUE"]
+    decision_params: list[object] = [repository_id]
+    if status:
+        decision_conditions.append("status = %s")
+        decision_params.append(status)
+    relationship_conditions = ["repository_id = %s"]
+    relationship_params: list[object] = [repository_id]
+    if not include_pending:
+        relationship_conditions.append("review_status IN ('approved', 'valid')")
+    if relationship_type:
+        relationship_conditions.append("relationship_type = %s")
+        relationship_params.append(relationship_type)
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT id, title, summary, status, review_status, confidence, extracted_at FROM decisions WHERE {' AND '.join(decision_conditions)} ORDER BY extracted_at", decision_params)
+        nodes = cur.fetchall()
+        cur.execute(f"SELECT * FROM decision_relationships WHERE {' AND '.join(relationship_conditions)} ORDER BY created_at", relationship_params)
+        edges = cur.fetchall()
+    return {"nodes": nodes, "edges": edges, "total_nodes": len(nodes), "total_edges": len(edges)}
+
+
+@app.post("/api/v1/decision-relationships/{relationship_id}/review")
+def review_decision_relationship(relationship_id: UUID, payload: RelationshipReviewRequest, conn: Connection = Depends(get_connection)) -> dict:
+    review_status = {"approve": "approved", "reject": "rejected", "request_review": "needs_review"}[payload.action]
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM decision_relationships WHERE id = %s FOR UPDATE", (relationship_id,))
+        relationship = cur.fetchone()
+        if not relationship:
+            raise error("RELATIONSHIP_NOT_FOUND", "The decision relationship was not found.", 404)
+        cur.execute("UPDATE decision_relationships SET review_status = %s, reviewed_at = NOW() WHERE id = %s RETURNING *", (review_status, relationship_id))
+        result = cur.fetchone()
+        cur.execute("INSERT INTO decision_relationship_review_history (relationship_id, previous_review_status, new_review_status, reviewer_note, reviewer_identity) VALUES (%s, %s, %s, %s, %s) RETURNING *", (relationship_id, relationship["review_status"], review_status, payload.note, "manual/anonymous"))
+        result["review_history_entry"] = cur.fetchone()
+    conn.commit()
+    return result
 
 
 @app.get("/api/v1/repositories/{repository_id}/decisions")

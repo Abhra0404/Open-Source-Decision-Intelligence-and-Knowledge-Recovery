@@ -37,3 +37,25 @@ MODEL_PROVIDER=open_weight MODEL_NAME=qwen3:8b MODEL_BASE_URL=http://localhost:1
 ```
 
 The deterministic `rule-based-mvp` provider remains available through `MODEL_PROVIDER=deterministic` for comparison. No closed model API, hosted proprietary inference API, or fine-tuning is used.
+
+## Evaluation status
+
+The reproducible evaluator is in `backend/evaluation/runner.py`. It exports
+real ingested discussions for manual annotation and then compares the
+deterministic and open-weight providers. The checked-in dataset is an
+annotation template; benchmark metrics are intentionally not reported until
+25 discussions have been manually labelled with exact evidence. This avoids
+fabricating evaluation results.
+
+Coding assistance was provided by GitHub Copilot. No model training or
+fine-tuning was performed.
+
+## Integration status
+
+The demo workflow includes repository ingestion, evidence-validated decision
+extraction, diagnostics, human review, repository-scoped Q&A with server-side
+citation validation, and pending/reviewed decision relationships exposed through
+timeline and graph APIs. The Q&A retrieval implementation is PostgreSQL
+full-text plus exact-match fallback; semantic vector retrieval is not enabled.
+Benchmark evaluation remains blocked until the 25 exported discussions are
+manually labelled with exact expected outcomes and evidence.
