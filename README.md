@@ -16,14 +16,25 @@ explain *why*. METIS is being built to connect those pieces of context.
 
 ## Implemented MVP capabilities
 
-The current local MVP includes GitHub discussion ingestion, deterministic and
-local Qwen3 8B extraction, evidence-grounded diagnostics, human decision
-review, repository-scoped Decision Intelligence Q&A, and pending/reviewed
-Decision Evolution relationships with timeline and graph APIs.
+The current MVP includes GitHub discussion ingestion, Groq-hosted Qwen3.8 27B
+decision extraction, optional Ollama and deterministic providers,
+evidence-grounded diagnostics with candidate reconciliation, human decision review, repository-scoped
+Decision Intelligence Q&A, and pending/reviewed Decision Evolution
+relationships with timeline and graph APIs.
 
-Q&A uses PostgreSQL full-text retrieval and the configured local open-weight
-provider. It returns an insufficient-evidence response when no verified source
-can support an answer. Relationship proposals remain pending until reviewed.
+Q&A uses PostgreSQL full-text retrieval and the configured inference provider.
+It returns an insufficient-evidence response when no verified source can
+support an answer. Relationship proposals remain pending until reviewed.
+Hosted inference is the current default; do not describe the project as fully
+local.
+
+Candidate reconciliation compares normalized decision content and status,
+verified evidence overlap, and source discussion. A shared discussion ID alone
+never suppresses a candidate. Exact or high-overlap duplicates link to the
+existing decision; ambiguous and explicitly superseding candidates are stored
+with `needs_review` without changing the existing record. Diagnostics expose
+the match rationale, existing decision, disposition, and a reproducible token
+Jaccard text-overlap score where a comparison was made.
 
 ------------------------------------------------------------------------
 
@@ -158,8 +169,9 @@ flowchart TB
 7.  **Respond:** Present concise answers with evidence links so
     developers can inspect the original source.
 
-The language model and embedding model are still under evaluation. Exact
-model names will be documented after they are integrated and tested.
+Decision extraction uses Groq's OpenAI-compatible API with
+`qwen/qwen3.8-27b`; Ollama and the deterministic provider remain selectable.
+Semantic embeddings remain unimplemented.
 
 ------------------------------------------------------------------------
 
@@ -222,8 +234,8 @@ documented after integration and testing.
                           explicit pipeline       classification, and
                                                   retrieval
 
-  Language model          Under evaluation        Extract structured
-                                                  decisions and explain
+  Language model          Qwen3.8 27B via Groq    Extract structured
+                          (Ollama optional)       decisions and explain
                                                   relevant context
 
   Embeddings              Sentence Transformers;  Semantic retrieval of
@@ -240,8 +252,10 @@ documented after integration and testing.
   -----------------------------------------------------------------------
 ```
 
-We will list exact model names here only after they are integrated and
-used in the submitted implementation.
+The configured Groq model has been exercised against the existing
+`pallets/click` repository. See [HACKATHON.md](./HACKATHON.md) for the
+verified run and usage details. Hosted-inference eligibility under event
+rules has not been confirmed.
 
 ------------------------------------------------------------------------
 
@@ -302,10 +316,10 @@ Sonipat**, under:
 **Problem Statement 6: Open Source Decision Intelligence and Knowledge
 Recovery**
 
-The first vertical slice is implemented: a FastAPI backend, PostgreSQL
-schema, GitHub ingestion, deterministic evidence-preserving extraction,
-and a Next.js source discussion explorer. LLM extraction and semantic
-embeddings remain future work.
+The current vertical slice includes a FastAPI backend, PostgreSQL schema,
+GitHub ingestion, configurable structured extraction with independent evidence
+validation, and a Next.js source discussion explorer. Semantic embeddings and
+benchmark evaluation remain future work.
 
 ### Local setup
 
@@ -313,9 +327,12 @@ Requirements: Python 3.13+, Node.js 20+, npm, and Docker Desktop.
 
 ```bash
 docker compose up -d postgres
+# Existing database volumes need the new candidate-reconciliation migration:
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U metis -d metis < backend/migrations/008_candidate_deduplication.sql
 python3 -m venv .venv
 .venv/bin/pip install -r backend/requirements.txt
 cp .env.example .env
+# Set GROQ_API_KEY in .env; keep the key private and do not commit .env.
 
 cd backend
 ../.venv/bin/python run.py
@@ -331,10 +348,10 @@ npm run dev
 
 Open `http://localhost:3000`, enter a public GitHub repository URL, start
 ingestion, then click **Extract decisions**. The API is available at
-`http://localhost:8000/docs`. Extraction currently uses the explicit
-deterministic MVP provider; it only creates evidence-backed candidates and
-does not claim that a language model is configured.
-Set `GITHUB_TOKEN` in `.env` or the shell for higher GitHub API limits.
+`http://localhost:8000/docs`. The default provider is Groq with
+`qwen/qwen3.8-27b`; set `MODEL_PROVIDER=ollama` or
+`MODEL_PROVIDER=deterministic` in `.env` to select an alternative. Set
+`GITHUB_TOKEN` in `.env` or the shell for higher GitHub API limits.
 
 ### MVP milestones
 
@@ -342,8 +359,9 @@ Set `GITHUB_TOKEN` in `.env` or the shell for higher GitHub API limits.
 -   [x] Normalize issues, pull requests, reviews, and comments.
 -   [x] Persist structured discussions with source evidence.
 -   [x] Display ingested source discussions in the frontend.
--   [ ] Extract candidate decisions with an evaluated language model.
--   [ ] Classify decision status with an evaluated language model.
+-   [x] Generate structured decision candidates with the configured provider.
+-   [x] Validate evidence independently and route uncertain decisions to review.
+-   [ ] Evaluate extraction against manually annotated examples.
 -   [ ] Retrieve decisions with semantic embeddings.
 -   [ ] Evaluate extraction and classification against manually reviewed
     examples.

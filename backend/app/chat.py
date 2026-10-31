@@ -104,5 +104,12 @@ def answer_question(conn: Connection, repository_id: UUID, question: str, histor
         "is_trusted": item["is_trusted"],
         "summary": item["summary"],
     } for item in retrieved]
-    provider = build_provider(settings.model_provider, settings.model_name, settings.model_base_url, settings.model_api_key)
+    provider = build_provider(
+        settings.model_provider,
+        settings.active_model_name,
+        settings.active_base_url,
+        settings.active_api_key,
+        settings.active_timeout_seconds,
+        groq_max_retries=settings.groq_max_retries,
+    )
     return provider.answer_question(question, history, context), retrieved, retrieval_latency

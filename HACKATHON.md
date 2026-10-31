@@ -36,26 +36,8 @@ ollama run qwen3:8b
 MODEL_PROVIDER=open_weight MODEL_NAME=qwen3:8b MODEL_BASE_URL=http://localhost:11434 uvicorn backend.app.main:app --reload --port 8000
 ```
 
-The deterministic `rule-based-mvp` provider remains available through `MODEL_PROVIDER=deterministic` for comparison. No closed model API, hosted proprietary inference API, or fine-tuning is used.
+The deterministic `rule-based-mvp` provider remains available through `MODEL_PROVIDER=deterministic` for comparison. No model training or fine-tuning was performed.
 
-## Evaluation status
+METIS also has an optional Groq-hosted provider configured as `qwen/qwen3.8-27b`. A completed extraction run (`646fcae2-bfeb-46fb-9d4d-baf269b4fb60`) recorded two model calls, model revision `fp_424cb89518`, 1,590 prompt tokens, and 1,095 completion tokens. This verifies that the provider was invoked; it does not establish hackathon eligibility. Organizer permission for Groq-hosted inference and the exact model license must be confirmed before relying on this provider for judging. Use the local Ollama Qwen3 8B provider when hosted inference is not approved.
 
-The reproducible evaluator is in `backend/evaluation/runner.py`. It exports
-real ingested discussions for manual annotation and then compares the
-deterministic and open-weight providers. The checked-in dataset is an
-annotation template; benchmark metrics are intentionally not reported until
-25 discussions have been manually labelled with exact evidence. This avoids
-fabricating evaluation results.
-
-Coding assistance was provided by GitHub Copilot. No model training or
-fine-tuning was performed.
-
-## Integration status
-
-The demo workflow includes repository ingestion, evidence-validated decision
-extraction, diagnostics, human review, repository-scoped Q&A with server-side
-citation validation, and pending/reviewed decision relationships exposed through
-timeline and graph APIs. The Q&A retrieval implementation is PostgreSQL
-full-text plus exact-match fallback; semantic vector retrieval is not enabled.
-Benchmark evaluation remains blocked until the 25 exported discussions are
-manually labelled with exact expected outcomes and evidence.
+The Groq credential is read from the server-side `GROQ_API_KEY` environment variable and is not included in the repository or returned by the frontend.

@@ -107,8 +107,15 @@ def _score(example: dict[str, Any], result: Any, record: DiscussionInput) -> dic
 def evaluate(dataset: Path, output: Path) -> None:
     examples = _load_dataset(dataset)
     providers = [build_provider("deterministic", "rule-based-mvp", "", None)]
-    if settings.model_provider == "open_weight":
-        providers.append(build_provider(settings.model_provider, settings.model_name, settings.model_base_url, settings.model_api_key))
+    if settings.model_provider != "deterministic":
+        providers.append(build_provider(
+            settings.model_provider,
+            settings.active_model_name,
+            settings.active_base_url,
+            settings.active_api_key,
+            settings.active_timeout_seconds,
+            groq_max_retries=settings.groq_max_retries,
+        ))
     repository_id = UUID("00000000-0000-0000-0000-000000000000")
     report: dict[str, Any] = {"dataset": str(dataset), "examples": len(examples), "providers": {}}
     for provider in providers:
