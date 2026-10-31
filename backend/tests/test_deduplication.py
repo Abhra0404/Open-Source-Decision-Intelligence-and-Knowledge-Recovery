@@ -166,6 +166,20 @@ class CandidateDeduplicationTests(unittest.TestCase):
         self.assertTrue(result.requires_review)
         self.assertEqual(result.matched_decision_id, existing["id"])
 
+    def test_negated_superseding_language_is_not_classified_as_superseding(self) -> None:
+        candidate = self.candidate(
+            summary="The new proposal does not replace the existing pooling decision.",
+        )
+
+        result = match_candidate(
+            candidate,
+            self.repository_id,
+            {self.evidence_id},
+            [self.existing()],
+        )
+
+        self.assertNotEqual(result.match_type, "superseding")
+
     def test_shared_evidence_without_equivalence_is_ambiguous(self) -> None:
         candidate = self.candidate(
             title="Use a connection timeout",

@@ -2,9 +2,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 import time
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg import Connection
 from psycopg.types.json import Jsonb
@@ -12,23 +12,41 @@ from psycopg.types.json import Jsonb
 from .database import connection, get_connection, lock_repository, open_weight_model_lock
 from .github import GitHubClient, GitHubError
 from .cleaning import clean_discussion
-from .chat import answer_question as generate_chat_answer, validate_citations
+from .chat import QAGenerationError, answer_question as generate_chat_answer, validate_citations
 from .extraction import DiscussionInput, ExtractedDecision, ValidationOutcome, assess_candidate, detect_decision_signals
 from .ingestion import ingest_repository, parse_repository_url
 from .config import settings
 from .deduplication import DecisionMatch, match_candidate
-from .providers import ProviderError, build_provider
+from .providers import build_provider
+from .qa_logging import bind_request_id, current_request_id, log_qa_event, reset_request_id
 from .relationships import RelationshipProposal, validate_relationship
 from .schemas import ChatMessageCreate, ConversationCreate, ExtractionRequest, ExtractionResponse, IngestionCreate, IngestionResponse, RelationshipReviewRequest, RepositoryCreate, RepositoryResponse, ReviewRequest, SearchRequest
 
 app = FastAPI(title="METIS API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
 executor = ThreadPoolExecutor(max_workers=2)
+
+
+@app.middleware("http")
+async def add_request_correlation_id(request: Request, call_next):
+    supplied_request_id = request.headers.get("x-request-id")
+    try:
+        request_id = str(UUID(supplied_request_id)) if supplied_request_id else str(uuid4())
+    except ValueError:
+        request_id = str(uuid4())
+    token = bind_request_id(request_id)
+    try:
+        response = await call_next(request)
+    finally:
+        reset_request_id(token)
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 
 @dataclass(frozen=True)
@@ -54,8 +72,16 @@ def validate_provider_configuration() -> None:
     _configured_provider()
 
 
-def error(code: str, message: str, status_code: int) -> HTTPException:
-    return HTTPException(status_code, detail={"error": {"code": code, "message": message, "details": None}})
+def error(
+    code: str,
+    message: str,
+    status_code: int,
+    details: object | None = None,
+) -> HTTPException:
+    return HTTPException(
+        status_code,
+        detail={"error": {"code": code, "message": message, "details": details}},
+    )
 
 
 @app.get("/health")
@@ -89,7 +115,26 @@ def get_model_config() -> dict:
 @app.get("/api/v1/repositories")
 def list_repositories(conn: Connection = Depends(get_connection)) -> dict:
     with conn.cursor() as cur:
-        cur.execute("SELECT id, full_name, html_url, description, default_branch, is_private, created_at, updated_at FROM repositories ORDER BY full_name")
+        cur.execute(
+            """
+            SELECT r.id, r.full_name, r.html_url, r.description, r.default_branch, r.is_private,
+                   r.created_at, r.updated_at,
+                   COUNT(DISTINCT d.id) AS discussions_count,
+                   COUNT(DISTINCT dec.id) AS decisions_count,
+                   MAX(ir.completed_at) AS last_ingested_at,
+                   (
+                     SELECT er.status FROM extraction_runs er
+                     WHERE er.repository_id = r.id
+                     ORDER BY er.created_at DESC LIMIT 1
+                   ) AS extraction_status
+            FROM repositories r
+            LEFT JOIN discussions d ON d.repository_id = r.id
+            LEFT JOIN decisions dec ON dec.repository_id = r.id AND dec.is_active = TRUE
+            LEFT JOIN ingestion_runs ir ON ir.repository_id = r.id AND ir.status = 'completed'
+            GROUP BY r.id
+            ORDER BY r.full_name
+            """
+        )
         items = cur.fetchall()
     return {"items": items, "total": len(items)}
 
@@ -128,8 +173,22 @@ def get_chat_conversation(conversation_id: UUID, conn: Connection = Depends(get_
         messages = cur.fetchall()
         for message in messages:
             cur.execute(
-                "SELECT de.id AS evidence_id, d.id AS decision_id, d.source_discussion_id, d.status AS decision_status, d.review_status, de.evidence_role, de.evidence_excerpt AS excerpt, source.source_url FROM chat_message_sources cms JOIN decision_evidence de ON de.id = cms.evidence_id JOIN decisions d ON d.id = de.decision_id JOIN discussions source ON source.id = de.discussion_id WHERE cms.message_id = %s",
-                (message["id"],),
+                """
+                SELECT de.id AS evidence_id, d.id AS decision_id,
+                       d.title AS decision_title, d.status AS decision_status,
+                       d.review_status, d.review_reason,
+                       d.is_active AS decision_is_active, de.evidence_role,
+                       de.evidence_excerpt AS excerpt, source.title AS source_title,
+                       source.source_url
+                FROM chat_message_sources cms
+                JOIN decision_evidence de ON de.id = cms.evidence_id
+                JOIN decisions d ON d.id = de.decision_id
+                JOIN discussions source ON source.id = de.discussion_id
+                WHERE cms.message_id = %s
+                  AND d.repository_id = %s
+                  AND source.repository_id = d.repository_id
+                """,
+                (message["id"], conversation["repository_id"]),
             )
             message["sources"] = cur.fetchall()
         conversation["messages"] = messages
@@ -146,7 +205,22 @@ def list_chat_messages(conversation_id: UUID, conn: Connection = Depends(get_con
         items = cur.fetchall()
         for message in items:
             cur.execute(
-                "SELECT de.id AS evidence_id, de.evidence_role, de.evidence_excerpt AS excerpt, source.source_url FROM chat_message_sources cms JOIN decision_evidence de ON de.id = cms.evidence_id JOIN discussions source ON source.id = de.discussion_id WHERE cms.message_id = %s",
+                """
+                SELECT de.id AS evidence_id, d.id AS decision_id,
+                       d.title AS decision_title, d.status AS decision_status,
+                       d.review_status, de.evidence_role,
+                       de.evidence_excerpt AS excerpt, source.title AS source_title,
+                       source.source_url
+                FROM chat_message_sources cms
+                JOIN decision_evidence de ON de.id = cms.evidence_id
+                JOIN decisions d ON d.id = de.decision_id
+                JOIN discussions source ON source.id = de.discussion_id
+                JOIN chat_messages m ON m.id = cms.message_id
+                JOIN chat_conversations c ON c.id = m.conversation_id
+                WHERE cms.message_id = %s
+                  AND d.repository_id = c.repository_id
+                  AND source.repository_id = d.repository_id
+                """,
                 (message["id"],),
             )
             message["sources"] = cur.fetchall()
@@ -155,32 +229,84 @@ def list_chat_messages(conversation_id: UUID, conn: Connection = Depends(get_con
 
 @app.post("/api/v1/chat/conversations/{conversation_id}/messages")
 def create_chat_message(conversation_id: UUID, payload: ChatMessageCreate, conn: Connection = Depends(get_connection)) -> dict:
+    log_qa_event("qa.endpoint_entered", conversation_id=str(conversation_id))
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM chat_conversations WHERE id = %s FOR UPDATE", (conversation_id,))
         conversation = cur.fetchone()
         if not conversation:
+            log_qa_event("qa.conversation_not_found", conversation_id=str(conversation_id))
             raise error("CONVERSATION_NOT_FOUND", "The conversation was not found.", 404)
+        repository_id = conversation["repository_id"]
+        log_qa_event(
+            "qa.repository_resolved",
+            conversation_id=str(conversation_id),
+            repository_id=str(repository_id),
+        )
         cur.execute("SELECT role, content FROM chat_messages WHERE conversation_id = %s ORDER BY created_at DESC LIMIT 6", (conversation_id,))
         history = list(reversed(cur.fetchall()))
     try:
-        answer, retrieved, retrieval_latency = generate_chat_answer(
-            conn, conversation["repository_id"], payload.content, history,
+        answer, retrieved, retrieval_latency, qa_diagnostics = generate_chat_answer(
+            conn, repository_id, payload.content, history,
         )
-        cited_sources = validate_citations(conn, conversation["repository_id"], retrieved, answer.citations)
+        qa_diagnostics["request_id"] = current_request_id()
+        cited_sources = validate_citations(conn, repository_id, retrieved, answer.citations)
+        log_qa_event(
+            "qa.citation_validation",
+            submitted_citations=len(answer.citations),
+            validated_citations=len(cited_sources),
+        )
         if answer.citations and len(cited_sources) != len(dict.fromkeys(answer.citations)):
+            qa_diagnostics["fallback_reason"] = "citation_failed_repository_validation"
+            log_qa_event(
+                "qa.fallback_triggered",
+                reason=qa_diagnostics["fallback_reason"],
+                retrieved_evidence_count=len(retrieved),
+            )
             answer = answer.__class__(
                 "I couldn't find sufficient evidence in this repository to answer that question.",
                 [], answer.provider, answer.model, answer.prompt_tokens, answer.completion_tokens, answer.latency_ms,
             )
             cited_sources = []
         elif retrieved and not answer.citations:
-            answer = answer.__class__(
-                "I couldn't find sufficient evidence in this repository to answer that question.",
-                [], answer.provider, answer.model, answer.prompt_tokens, answer.completion_tokens, answer.latency_ms,
-            )
-    except Exception as exc:
+            if qa_diagnostics["fallback_reason"] is None:
+                qa_diagnostics["fallback_reason"] = "answer_returned_without_valid_citations"
+                log_qa_event(
+                    "qa.fallback_triggered",
+                    reason=qa_diagnostics["fallback_reason"],
+                    retrieved_evidence_count=len(retrieved),
+                )
+                answer = answer.__class__(
+                    "I couldn't find sufficient evidence in this repository to answer that question.",
+                    [], answer.provider, answer.model, answer.prompt_tokens, answer.completion_tokens, answer.latency_ms,
+                )
+    except QAGenerationError as exc:
+        exc.diagnostics["request_id"] = current_request_id()
         conn.rollback()
-        raise error("CHAT_GENERATION_FAILED", str(exc)[:500], 502) from exc
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO chat_messages (conversation_id, role, content, qa_diagnostics)
+                VALUES (%s, 'user', %s, %s)
+                """,
+                (conversation_id, payload.content, Jsonb(exc.diagnostics)),
+            )
+            cur.execute(
+                "UPDATE chat_conversations SET updated_at = NOW() WHERE id = %s",
+                (conversation_id,),
+            )
+        conn.commit()
+        log_qa_event(
+            "qa.request_failed",
+            conversation_id=str(conversation_id),
+            error_stage=exc.provider_error.stage,
+            repository_id=str(repository_id),
+        )
+        raise error(
+            "CHAT_GENERATION_FAILED",
+            str(exc.provider_error)[:500],
+            502,
+            details=exc.diagnostics,
+        ) from exc
     with conn.cursor() as cur:
         cur.execute("INSERT INTO chat_messages (conversation_id, role, content) VALUES (%s, 'user', %s) RETURNING id", (conversation_id, payload.content))
         user_message_id = cur.fetchone()["id"]
@@ -189,12 +315,13 @@ def create_chat_message(conversation_id: UUID, payload: ChatMessageCreate, conn:
             INSERT INTO chat_messages
               (conversation_id, role, content, provider, model_name,
                retrieval_latency_ms, generation_latency_ms,
-               retrieved_evidence_count, citation_count)
-            VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s, %s)
+               retrieved_evidence_count, citation_count, qa_diagnostics)
+            VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (conversation_id, answer.answer, answer.provider, answer.model,
-             retrieval_latency, answer.latency_ms, len(retrieved), len(cited_sources)),
+             retrieval_latency, answer.latency_ms, len(retrieved), len(cited_sources),
+             Jsonb(qa_diagnostics)),
         )
         assistant_message = cur.fetchone()
         for source in cited_sources:
@@ -202,7 +329,12 @@ def create_chat_message(conversation_id: UUID, payload: ChatMessageCreate, conn:
         cur.execute("UPDATE chat_conversations SET updated_at = NOW() WHERE id = %s", (conversation_id,))
     conn.commit()
     assistant_message["sources"] = cited_sources
-    return {"user_message_id": user_message_id, "message": assistant_message, "sources": cited_sources}
+    return {
+        "user_message_id": user_message_id,
+        "message": assistant_message,
+        "sources": cited_sources,
+        "diagnostics": qa_diagnostics,
+    }
 
 
 @app.post("/api/v1/repositories", response_model=RepositoryResponse, status_code=201)
@@ -572,15 +704,15 @@ def _run_extraction_body(extraction_id: UUID, repository_id: UUID, force_reproce
                         ))
                     continue
                 try:
-                    persistence = _persist_candidate(
-                        conn,
-                        repository_id,
-                        candidate,
-                        outcome,
-                        str(model_info["model"]),
-                    )
+                    with conn.transaction():
+                        persistence = _persist_candidate(
+                            conn,
+                            repository_id,
+                            candidate,
+                            outcome,
+                            str(model_info["model"]),
+                        )
                 except Exception as exc:
-                    conn.rollback()
                     candidates_rejected += 1
                     lifecycle["persistence_result"] = "failed"
                     lifecycle["validation_errors"] = [str(exc)[:1000]]
@@ -592,45 +724,45 @@ def _run_extraction_body(extraction_id: UUID, repository_id: UUID, force_reproce
                         ))
                     continue
                 lifecycle.update({
-                        "duplicate_match_type": persistence.match.match_type,
-                        "matched_decision_id": str(persistence.match.matched_decision_id)
-                        if persistence.match.matched_decision_id else None,
-                        "matched_decision_title": persistence.match.matched_decision_title,
-                        "matched_decision_status": persistence.match.matched_decision_status,
-                        "matched_decision_review_status": persistence.match.matched_decision_review_status,
-                        "matching_rationale": persistence.match.rationale,
-                        "similarity_score": persistence.match.similarity_score,
-                        "similarity_method": persistence.match.similarity_method,
-                        "candidate_disposition": persistence.disposition,
+                    "duplicate_match_type": persistence.match.match_type,
+                    "matched_decision_id": str(persistence.match.matched_decision_id)
+                    if persistence.match.matched_decision_id else None,
+                    "matched_decision_title": persistence.match.matched_decision_title,
+                    "matched_decision_status": persistence.match.matched_decision_status,
+                    "matched_decision_review_status": persistence.match.matched_decision_review_status,
+                    "matching_rationale": persistence.match.rationale,
+                    "similarity_score": persistence.match.similarity_score,
+                    "similarity_method": persistence.match.similarity_method,
+                    "candidate_disposition": persistence.disposition,
                 })
                 if persistence.disposition == "matched_existing":
-                        decisions_existing += 1
-                        for row_metadata in thread_rows[thread_key]:
-                            diagnostics.append(_diagnostic(
-                                {**thread_metadata[thread_key], **row_metadata},
-                                extraction_id, repository_id, signal_detected, matched_rule,
-                                True, "duplicate_candidate", persistence.match.rationale, details={
-                                    **lifecycle, "persistence_result": "duplicate_skipped",
-                                },
-                            ))
-                        continue
-                created += 1
-                for row_metadata in thread_rows[thread_key]:
+                    decisions_existing += 1
+                    for row_metadata in thread_rows[thread_key]:
                         diagnostics.append(_diagnostic(
                             {**thread_metadata[thread_key], **row_metadata},
-                            extraction_id,
-                            repository_id,
-                            signal_detected,
-                            matched_rule,
-                            True,
-                            "decision_created",
-                            persistence.match.rationale
-                            if persistence.match.requires_review else outcome.review_reason,
-                            details={
-                                **lifecycle,
-                                "persistence_result": "decision_and_evidence_inserted",
+                            extraction_id, repository_id, signal_detected, matched_rule,
+                            True, "duplicate_candidate", persistence.match.rationale, details={
+                                **lifecycle, "persistence_result": "duplicate_skipped",
                             },
                         ))
+                    continue
+                created += 1
+                for row_metadata in thread_rows[thread_key]:
+                    diagnostics.append(_diagnostic(
+                        {**thread_metadata[thread_key], **row_metadata},
+                        extraction_id,
+                        repository_id,
+                        signal_detected,
+                        matched_rule,
+                        True,
+                        "decision_created",
+                        persistence.match.rationale
+                        if persistence.match.requires_review else outcome.review_reason,
+                        details={
+                            **lifecycle,
+                            "persistence_result": "decision_and_evidence_inserted",
+                        },
+                    ))
             with conn.cursor() as cur:
                 for diagnostic in diagnostics:
                     cur.execute(
@@ -1110,17 +1242,17 @@ def get_decision_graph(repository_id: UUID, include_pending: bool = False, statu
     if status:
         decision_conditions.append("status = %s")
         decision_params.append(status)
-    relationship_conditions = ["repository_id = %s"]
+    relationship_conditions = ["rel.repository_id = %s"]
     relationship_params: list[object] = [repository_id]
     if not include_pending:
-        relationship_conditions.append("review_status IN ('approved', 'valid')")
+        relationship_conditions.append("rel.review_status IN ('approved', 'valid')")
     if relationship_type:
-        relationship_conditions.append("relationship_type = %s")
+        relationship_conditions.append("rel.relationship_type = %s")
         relationship_params.append(relationship_type)
     with conn.cursor() as cur:
         cur.execute(f"SELECT id, title, summary, status, review_status, confidence, extracted_at FROM decisions WHERE {' AND '.join(decision_conditions)} ORDER BY extracted_at", decision_params)
         nodes = cur.fetchall()
-        cur.execute(f"SELECT * FROM decision_relationships WHERE {' AND '.join(relationship_conditions)} ORDER BY created_at", relationship_params)
+        cur.execute(f"SELECT rel.*, sd.title AS source_title, td.title AS target_title FROM decision_relationships rel JOIN decisions sd ON sd.id = rel.source_decision_id JOIN decisions td ON td.id = rel.target_decision_id WHERE {' AND '.join(relationship_conditions)} ORDER BY rel.created_at", relationship_params)
         edges = cur.fetchall()
     return {"nodes": nodes, "edges": edges, "total_nodes": len(nodes), "total_edges": len(edges)}
 
@@ -1183,10 +1315,32 @@ def get_decision(decision_id: UUID, conn: Connection = Depends(get_connection)) 
         decision = cur.fetchone()
         if not decision:
             raise error("DECISION_NOT_FOUND", "The decision was not found.", 404)
-        cur.execute("SELECT de.discussion_id, d.source_type, d.author_login, de.evidence_role, de.evidence_excerpt AS excerpt, d.source_url, d.source_created_at FROM decision_evidence de JOIN discussions d ON d.id = de.discussion_id WHERE de.decision_id = %s", (decision_id,))
+        cur.execute("SELECT de.id, de.discussion_id, d.source_type, d.author_login, de.evidence_role, de.evidence_excerpt AS excerpt, d.source_url, d.source_created_at FROM decision_evidence de JOIN discussions d ON d.id = de.discussion_id WHERE de.decision_id = %s", (decision_id,))
         decision["evidence"] = cur.fetchall()
         cur.execute("SELECT * FROM decision_review_history WHERE decision_id = %s ORDER BY created_at DESC", (decision_id,))
         decision["review_history"] = cur.fetchall()
+        cur.execute(
+            """
+            SELECT rel.id, rel.relationship_type, rel.explanation, rel.confidence, rel.review_status,
+                   CASE WHEN rel.source_decision_id = %s THEN td.id ELSE sd.id END AS related_decision_id,
+                   CASE WHEN rel.source_decision_id = %s THEN td.title ELSE sd.title END AS related_decision_title,
+                   CASE WHEN rel.source_decision_id = %s THEN 'outgoing' ELSE 'incoming' END AS direction
+            FROM decision_relationships rel
+            JOIN decisions sd ON sd.id = rel.source_decision_id
+            JOIN decisions td ON td.id = rel.target_decision_id
+            WHERE rel.source_decision_id = %s OR rel.target_decision_id = %s
+            """,
+            (decision_id, decision_id, decision_id, decision_id, decision_id),
+        )
+        decision["related_decisions"] = cur.fetchall()
+        if decision.get("source_discussion_id"):
+            cur.execute(
+                "SELECT id, source_type, title, source_url, author_login, source_created_at FROM discussions WHERE id = %s",
+                (decision["source_discussion_id"],),
+            )
+            decision["source_discussion"] = cur.fetchone()
+        else:
+            decision["source_discussion"] = None
     return decision
 
 

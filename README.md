@@ -22,9 +22,14 @@ evidence-grounded diagnostics with candidate reconciliation, human decision revi
 Decision Intelligence Q&A, and pending/reviewed Decision Evolution
 relationships with timeline and graph APIs.
 
-Q&A uses PostgreSQL full-text retrieval and the configured inference provider.
-It returns an insufficient-evidence response when no verified source can
-support an answer. Relationship proposals remain pending until reviewed.
+Q&A combines exact-phrase matching with repository-scoped PostgreSQL full-text
+retrieval and a transparent query-token coverage score (minimum 0.30; exact
+phrases score 1.0). Decisions in review or
+historical states remain eligible, but those states are passed to the answer
+model and shown with source citations. Each answer stores retrieval counts,
+scores, strategy, and fallback reason in its diagnostics; the interface exposes
+these details. The insufficiency response is used when no relevant, validated
+evidence supports an answer. Relationship proposals remain pending until reviewed.
 Hosted inference is the current default; do not describe the project as fully
 local.
 
@@ -336,8 +341,9 @@ Requirements: Python 3.13+, Node.js 20+, npm, and Docker Desktop.
 
 ```bash
 docker compose up -d postgres
-# Existing database volumes need the new candidate-reconciliation migration:
+# Apply migrations to an existing database volume:
 docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U metis -d metis < backend/migrations/008_candidate_deduplication.sql
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U metis -d metis < backend/migrations/009_qa_diagnostics.sql
 python3 -m venv .venv
 .venv/bin/pip install -r backend/requirements.txt
 cp .env.example .env

@@ -13,13 +13,20 @@ import {
   Clock,
   History,
   FileCode2,
+  FolderGit2,
+  LayoutGrid,
+  List,
+  GitBranch,
+  ArrowRight,
+  ShieldAlert,
 } from "lucide-react";
-import { Decision, DecisionDetail, DecisionStatus, ReviewStatus } from "../types";
+import { Decision, DecisionDetail, Repository } from "../types";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
 interface DecisionsViewProps {
   decisions: Decision[];
+  repositories?: Repository[];
   selectedDecisionId: string | null;
   onSelectDecision: (id: string | null) => void;
   onRefresh: () => void;
@@ -27,14 +34,17 @@ interface DecisionsViewProps {
 
 export function DecisionsView({
   decisions,
+  repositories = [],
   selectedDecisionId,
   onSelectDecision,
   onRefresh,
 }: DecisionsViewProps) {
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [reviewFilter, setReviewFilter] = useState<string>("all");
-  const [minConfidence, setMinConfidence] = useState<string>("");
+  const [repoFilter, setRepoFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [reviewFilter, setReviewFilter] = useState("all");
+  const [minConfidence, setMinConfidence] = useState("");
+  const [viewMode, setViewMode] = useState<"table" | "cards">("table");
 
   const [detail, setDetail] = useState<DecisionDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -68,10 +78,21 @@ export function DecisionsView({
     };
   }, [selectedDecisionId]);
 
-  // Review action
+  // Review action with confirmation dialog
   async function handleReview(action: "approve" | "reject" | "request_review" | "mark_unresolved") {
     if (!detail) return;
-    const note = window.prompt(`Optional note for ${action}:`) ?? undefined;
+    const confirmPrompt =
+      action === "approve"
+        ? "Approve this decision as an active engineering decision?"
+        : action === "reject"
+        ? "Reject this decision candidate?"
+        : action === "mark_unresolved"
+        ? "Mark this decision as unresolved debate?"
+        : "Request maintainer review on this decision?";
+
+    if (!window.confirm(confirmPrompt)) return;
+
+    const note = window.prompt(`Optional reviewer note for ${action}:`) ?? undefined;
     try {
       const res = await fetch(`${API}/decisions/${detail.id}/review`, {
         method: "POST",
@@ -90,16 +111,27 @@ export function DecisionsView({
     }
   }
 
-  // Filtering
+  // Multi-criteria filtering
   const filtered = decisions.filter((d) => {
     const text = `${d.title} ${d.summary}`.toLowerCase();
     const matchSearch = !search || text.includes(search.toLowerCase());
+    const matchRepo = repoFilter === "all" || d.repository_id === repoFilter;
     const matchStatus = statusFilter === "all" || d.status === statusFilter;
     const matchReview = reviewFilter === "all" || d.review_status === reviewFilter;
     const matchConfidence =
       !minConfidence || (d.confidence !== null && d.confidence >= Number(minConfidence));
-    return matchSearch && matchStatus && matchReview && matchConfidence;
+    return matchSearch && matchRepo && matchStatus && matchReview && matchConfidence;
   });
+
+  // Split evidence into supporting vs rejecting
+  const supportingEvidence =
+    detail?.evidence?.filter(
+      (e) => !e.evidence_role.toLowerCase().includes("reject") && !e.evidence_role.toLowerCase().includes("alternative")
+    ) ?? [];
+  const rejectingEvidence =
+    detail?.evidence?.filter(
+      (e) => e.evidence_role.toLowerCase().includes("reject") || e.evidence_role.toLowerCase().includes("alternative")
+    ) ?? [];
 
   return (
     <div>
@@ -112,61 +144,101 @@ export function DecisionsView({
           gap: "12px",
           flexWrap: "wrap",
           alignItems: "center",
+          justifyContent: "space-between",
         }}
       >
-        <div style={{ position: "relative", flex: 1, minWidth: "220px" }}>
-          <Search
-            size={15}
-            color="var(--text-dim)"
-            style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)" }}
-          />
+        <div style={{ display: "flex", gap: "10px", flex: 1, minWidth: "260px", flexWrap: "wrap" }}>
+          <div style={{ position: "relative", flex: 1, minWidth: "220px" }}>
+            <Search
+              size={15}
+              color="var(--text-dim)"
+              style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)" }}
+            />
+            <input
+              className="input"
+              style={{ paddingLeft: "32px" }}
+              placeholder="Search decisions by title, summary, or keywords..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+
+          {/* Repository Filter */}
+          {repositories.length > 0 && (
+            <select
+              className="repo-selector"
+              value={repoFilter}
+              onChange={(e) => setRepoFilter(e.target.value)}
+              aria-label="Filter by repository"
+            >
+              <option value="all">All Repositories</option>
+              {repositories.map((repo) => (
+                <option key={repo.id} value={repo.id}>
+                  {repo.full_name}
+                </option>
+              ))}
+            </select>
+          )}
+
+          <select
+            className="repo-selector"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            aria-label="Filter by decision status"
+          >
+            <option value="all">All Classifications</option>
+            <option value="accepted">Accepted</option>
+            <option value="rejected">Rejected</option>
+            <option value="proposed">Proposed</option>
+            <option value="unresolved">Unresolved</option>
+          </select>
+
+          <select
+            className="repo-selector"
+            value={reviewFilter}
+            onChange={(e) => setReviewFilter(e.target.value)}
+            aria-label="Filter by review status"
+          >
+            <option value="all">All Review States</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+            <option value="needs_review">Needs Review</option>
+            <option value="valid">Legacy Valid</option>
+          </select>
+
           <input
+            type="number"
+            min="0"
+            max="1"
+            step="0.05"
+            placeholder="Min confidence"
             className="input"
-            style={{ paddingLeft: "32px" }}
-            placeholder="Search decisions by keyword or summary..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: "130px" }}
+            value={minConfidence}
+            onChange={(e) => setMinConfidence(e.target.value)}
           />
         </div>
 
-        <select
-          className="repo-selector"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          aria-label="Filter by decision status"
-        >
-          <option value="all">All Classifications</option>
-          <option value="accepted">Accepted</option>
-          <option value="rejected">Rejected</option>
-          <option value="proposed">Proposed</option>
-          <option value="unresolved">Unresolved</option>
-        </select>
-
-        <select
-          className="repo-selector"
-          value={reviewFilter}
-          onChange={(e) => setReviewFilter(e.target.value)}
-          aria-label="Filter by review status"
-        >
-          <option value="all">All Review States</option>
-          <option value="pending">Pending</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-          <option value="needs_review">Needs Review</option>
-          <option value="valid">Legacy Valid</option>
-        </select>
-
-        <input
-          type="number"
-          min="0"
-          max="1"
-          step="0.1"
-          placeholder="Min conf (e.g. 0.8)"
-          className="input"
-          style={{ width: "140px" }}
-          value={minConfidence}
-          onChange={(e) => setMinConfidence(e.target.value)}
-        />
+        {/* View mode toggle */}
+        <div style={{ display: "flex", gap: "4px", background: "var(--surface)", padding: "3px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
+          <button
+            className={`btn btn-sm ${viewMode === "table" ? "btn-secondary" : "btn-ghost"}`}
+            style={{ padding: "4px 8px" }}
+            onClick={() => setViewMode("table")}
+            title="Table View"
+          >
+            <List size={14} />
+          </button>
+          <button
+            className={`btn btn-sm ${viewMode === "cards" ? "btn-secondary" : "btn-ghost"}`}
+            style={{ padding: "4px 8px" }}
+            onClick={() => setViewMode("cards")}
+            title="Card Grid View"
+          >
+            <LayoutGrid size={14} />
+          </button>
+        </div>
       </div>
 
       {actionMessage && (
@@ -175,7 +247,7 @@ export function DecisionsView({
             marginBottom: "16px",
             fontSize: "13px",
             color: "var(--accent)",
-            padding: "8px 12px",
+            padding: "8px 14px",
             background: "var(--surface)",
             borderRadius: "var(--radius-sm)",
             border: "1px solid var(--border)",
@@ -185,7 +257,7 @@ export function DecisionsView({
         </div>
       )}
 
-      {/* ── Decisions Table ─────────────────────────────────── */}
+      {/* ── Main Decisions Content (Table or Cards) ─────────── */}
       <div className="panel">
         <div className="panel-header">
           <div className="panel-title">
@@ -201,14 +273,15 @@ export function DecisionsView({
           {filtered.length === 0 ? (
             <div className="state-empty">
               <FileCheck2 className="state-empty-icon" />
-              <div className="state-empty-title">No matching decisions</div>
+              <div className="state-empty-title">No matching decisions found</div>
               <div className="state-empty-desc">
                 {decisions.length === 0
                   ? "Extract decisions from ingested discussions to see them here."
-                  : "Try clearing your search query or relaxing filter criteria."}
+                  : "Try clearing your search query or relaxing your filter selections."}
               </div>
             </div>
-          ) : (
+          ) : viewMode === "table" ? (
+            /* Table View */
             <div className="table-wrapper">
               <table className="table">
                 <thead>
@@ -218,7 +291,7 @@ export function DecisionsView({
                     <th>Review State</th>
                     <th>Confidence</th>
                     <th>Evidence Sources</th>
-                    <th>Date</th>
+                    <th>Extracted</th>
                     <th>Action</th>
                   </tr>
                 </thead>
@@ -288,13 +361,56 @@ export function DecisionsView({
                           className="btn btn-secondary btn-sm"
                           onClick={() => onSelectDecision(d.id)}
                         >
-                          Details
+                          Inspect
                         </button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+          ) : (
+            /* Card Grid View */
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+                gap: "16px",
+                padding: "20px",
+              }}
+            >
+              {filtered.map((d) => (
+                <div
+                  key={d.id}
+                  className="editorial-card"
+                  style={{
+                    padding: "20px",
+                    cursor: "pointer",
+                    borderColor: selectedDecisionId === d.id ? "var(--accent)" : "var(--border)",
+                  }}
+                  onClick={() => onSelectDecision(d.id)}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
+                    <span className={`badge badge-${d.status}`}>{d.status}</span>
+                    <span className={`badge badge-${d.review_status}`}>{d.review_status}</span>
+                  </div>
+
+                  <h3 style={{ fontSize: "15px", color: "var(--text)", lineHeight: 1.3 }}>
+                    {d.title}
+                  </h3>
+
+                  <p style={{ fontSize: "12px", color: "var(--text-muted)", lineHeight: 1.5, maxHeight: "54px", overflow: "hidden" }}>
+                    {d.summary}
+                  </p>
+
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11px", color: "var(--text-dim)", paddingTop: "8px", borderTop: "1px solid var(--border-light)" }}>
+                    <span>
+                      {d.confidence !== null ? `${Math.round(d.confidence * 100)}% conf` : ""} · {d.evidence_count} evidence
+                    </span>
+                    <span style={{ color: "var(--accent)" }}>Inspect ↗</span>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -334,9 +450,46 @@ export function DecisionsView({
                   </button>
                 </div>
 
+                {/* Original GitHub Discussion Context */}
+                {detail.source_discussion && (
+                  <div
+                    style={{
+                      background: "var(--bg)",
+                      border: "1px solid var(--border)",
+                      borderRadius: "var(--radius-sm)",
+                      padding: "12px 14px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                    }}
+                  >
+                    <div>
+                      <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--accent)", textTransform: "uppercase" }}>
+                        Source Discussion Thread
+                      </span>
+                      <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--text)", marginTop: "2px" }}>
+                        {detail.source_discussion.title || `${detail.source_discussion.source_type} discussion`}
+                      </div>
+                      {detail.source_discussion.author_login && (
+                        <span style={{ fontSize: "11px", color: "var(--text-dim)" }}>
+                          Author: @{detail.source_discussion.author_login}
+                        </span>
+                      )}
+                    </div>
+                    <a
+                      href={detail.source_discussion.source_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn btn-secondary btn-sm"
+                    >
+                      GitHub Source ↗
+                    </a>
+                  </div>
+                )}
+
                 {/* Summary */}
                 <div className="drawer-section">
-                  <div className="drawer-section-title">Summary</div>
+                  <div className="drawer-section-title">Decision Summary</div>
                   <p style={{ fontSize: "14px", color: "var(--text)", lineHeight: 1.6 }}>
                     {detail.summary}
                   </p>
@@ -375,21 +528,39 @@ export function DecisionsView({
                     </ul>
                   ) : (
                     <p style={{ fontSize: "13px", color: "var(--text-dim)" }}>
-                      No alternatives recorded for this decision.
+                      No alternative proposals recorded.
                     </p>
                   )}
                 </div>
 
-                {/* Evidence Citations */}
+                {/* Trade-offs */}
+                {detail.tradeoffs && detail.tradeoffs.length > 0 && (
+                  <div className="drawer-section">
+                    <div className="drawer-section-title" style={{ color: "var(--warning)" }}>
+                      Engineering Trade-offs
+                    </div>
+                    <ul style={{ paddingLeft: "18px", color: "var(--text-muted)", fontSize: "13px" }}>
+                      {detail.tradeoffs.map((t, i) => (
+                        <li key={i} style={{ marginBottom: "6px" }}>
+                          {t}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Supporting Evidence */}
                 <div className="drawer-section">
-                  <div className="drawer-section-title">Supporting Evidence ({detail.evidence?.length ?? 0})</div>
-                  {detail.evidence && detail.evidence.length > 0 ? (
-                    detail.evidence.map((ev, i) => (
+                  <div className="drawer-section-title" style={{ color: "var(--success)" }}>
+                    Supporting Evidence ({supportingEvidence.length})
+                  </div>
+                  {supportingEvidence.length > 0 ? (
+                    supportingEvidence.map((ev, i) => (
                       <div key={i} className="evidence-card">
                         <div className="evidence-header">
-                          <span className="badge badge-neutral">{ev.evidence_role}</span>
+                          <span className="badge badge-accepted">{ev.evidence_role}</span>
                           <span style={{ color: "var(--text-dim)" }}>
-                            {ev.source_type} · @{ev.author_login || "unknown"}
+                            {ev.source_type} · @{ev.author_login || "contributor"}
                           </span>
                         </div>
                         <div className="evidence-quote">
@@ -402,23 +573,88 @@ export function DecisionsView({
                             rel="noreferrer"
                             className="evidence-link"
                           >
-                            Inspect original discussion on GitHub
+                            Inspect citation on GitHub
                             <ExternalLink size={12} />
                           </a>
-                          <span style={{ fontSize: "11px", color: "var(--text-dim)" }}>
-                            {ev.source_created_at
-                              ? new Date(ev.source_created_at).toLocaleDateString()
-                              : ""}
-                          </span>
                         </div>
                       </div>
                     ))
                   ) : (
                     <p style={{ fontSize: "13px", color: "var(--text-dim)" }}>
-                      No linked evidence items.
+                      No separate supporting evidence records.
                     </p>
                   )}
                 </div>
+
+                {/* Rejecting Evidence */}
+                {rejectingEvidence.length > 0 && (
+                  <div className="drawer-section">
+                    <div className="drawer-section-title" style={{ color: "var(--error)" }}>
+                      Rejecting / Alternative Evidence ({rejectingEvidence.length})
+                    </div>
+                    {rejectingEvidence.map((ev, i) => (
+                      <div key={i} className="evidence-card">
+                        <div className="evidence-header">
+                          <span className="badge badge-rejected">{ev.evidence_role}</span>
+                          <span style={{ color: "var(--text-dim)" }}>
+                            {ev.source_type} · @{ev.author_login || "contributor"}
+                          </span>
+                        </div>
+                        <div className="evidence-quote">
+                          &ldquo;{ev.excerpt || "No excerpt recorded"}&rdquo;
+                        </div>
+                        <a
+                          href={ev.source_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="evidence-link"
+                        >
+                          Inspect citation on GitHub
+                          <ExternalLink size={12} />
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Related Decisions */}
+                {detail.related_decisions && detail.related_decisions.length > 0 && (
+                  <div className="drawer-section">
+                    <div className="drawer-section-title" style={{ color: "var(--purple)" }}>
+                      Related Decisions ({detail.related_decisions.length})
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {detail.related_decisions.map((rel) => (
+                        <div
+                          key={rel.id}
+                          style={{
+                            background: "var(--card)",
+                            border: "1px solid var(--border)",
+                            borderRadius: "var(--radius-sm)",
+                            padding: "10px 14px",
+                            cursor: "pointer",
+                          }}
+                          onClick={() => onSelectDecision(rel.related_decision_id)}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                            <span className="badge badge-unresolved" style={{ fontSize: "10px" }}>
+                              {rel.relationship_type.replace(/_/g, " ")}
+                            </span>
+                            <span style={{ fontSize: "11px", color: "var(--text-dim)" }}>
+                              {Math.round(rel.confidence * 100)}% confidence
+                            </span>
+                          </div>
+                          <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--text)" }}>
+                            {rel.related_decision_title}
+                          </div>
+                          <p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>
+                            {rel.explanation}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Maintainer Review Controls */}
                 <div

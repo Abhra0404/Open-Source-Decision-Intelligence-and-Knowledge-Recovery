@@ -10,6 +10,9 @@ import {
   Cpu,
   Clock,
   ShieldCheck,
+  Copy,
+  Check,
+  AlertCircle,
 } from "lucide-react";
 import { ChatConversation, ChatMessage } from "../types";
 
@@ -33,6 +36,15 @@ export function IntelligenceView({ repositoryId }: IntelligenceViewProps) {
   const [inputQuestion, setInputQuestion] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  function handleCopy(id: string, text: string) {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+    }
+  }
 
   // Load conversations
   useEffect(() => {
@@ -214,7 +226,9 @@ export function IntelligenceView({ repositoryId }: IntelligenceViewProps) {
             {activeConv.messages.map((msg) => (
               <div key={msg.id} className={`chat-bubble ${msg.role}`}>
                 <div className="chat-meta">
-                  <span>{msg.role === "user" ? "Developer Inquiry" : "METIS Assistant"}</span>
+                  <span style={{ fontWeight: 600 }}>
+                    {msg.role === "user" ? "Developer Inquiry" : "METIS Assistant"}
+                  </span>
                   {msg.provider && (
                     <span>
                       · {msg.provider} / {msg.model_name}
@@ -223,11 +237,29 @@ export function IntelligenceView({ repositoryId }: IntelligenceViewProps) {
                   {msg.generation_latency_ms && (
                     <span>· {(msg.generation_latency_ms / 1000).toFixed(2)}s</span>
                   )}
+                  {msg.role === "assistant" && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ marginLeft: "auto", padding: "2px 6px", fontSize: "11px", height: "auto" }}
+                      onClick={() => handleCopy(msg.id, msg.content)}
+                      title="Copy response to clipboard"
+                    >
+                      {copiedId === msg.id ? (
+                        <>
+                          <Check size={12} color="var(--success)" />
+                          <span style={{ color: "var(--success)" }}>Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy size={12} />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  )}
                 </div>
 
-                <p style={{ fontSize: "14px", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
-                  {msg.content}
-                </p>
+                <FormattedMessageContent content={msg.content} />
 
                 {/* Evidence citations */}
                 {msg.sources && msg.sources.length > 0 && (
@@ -306,4 +338,201 @@ export function IntelligenceView({ repositoryId }: IntelligenceViewProps) {
       </div>
     </div>
   );
+}
+
+function FormattedMessageContent({ content }: { content: string }) {
+  const [copiedCodeIndex, setCopiedCodeIndex] = useState<number | null>(null);
+
+  const isInsufficientEvidence =
+    content.toLowerCase().includes("could not find enough evidence") ||
+    content.toLowerCase().includes("insufficient evidence");
+
+  function copyCode(code: string, idx: number) {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(code);
+      setCopiedCodeIndex(idx);
+      setTimeout(() => setCopiedCodeIndex(null), 2000);
+    }
+  }
+
+  // Split into code blocks vs markdown prose
+  const parts = content.split(/(```[\s\S]*?```)/g);
+
+  return (
+    <div className="formatted-chat-content" style={{ fontSize: "14px", lineHeight: 1.6 }}>
+      {isInsufficientEvidence && (
+        <div
+          style={{
+            marginBottom: "12px",
+            padding: "10px 14px",
+            background: "rgba(229, 174, 85, 0.12)",
+            border: "1px solid rgba(229, 174, 85, 0.3)",
+            borderRadius: "6px",
+            fontSize: "13px",
+            color: "var(--warning)",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+          }}
+        >
+          <AlertCircle size={16} />
+          <span>
+            <strong>Grounding Notice:</strong> The ingested discussions do not contain verified
+            evidence directly answering this inquiry. No unsupported claims were fabricated.
+          </span>
+        </div>
+      )}
+
+      {parts.map((part, index) => {
+        if (part.startsWith("```") && part.endsWith("```")) {
+          const lines = part.slice(3, -3).trim().split("\n");
+          const firstLine = lines[0].trim();
+          const hasLang = !firstLine.includes(" ") && firstLine.length < 15;
+          const lang = hasLang ? firstLine : "text";
+          const code = hasLang ? lines.slice(1).join("\n") : lines.join("\n");
+
+          return (
+            <div
+              key={index}
+              style={{
+                margin: "12px 0",
+                background: "#080A0E",
+                borderRadius: "8px",
+                border: "1px solid var(--border)",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "6px 12px",
+                  background: "var(--surface)",
+                  borderBottom: "1px solid var(--border)",
+                  fontSize: "11px",
+                  color: "var(--text-dim)",
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                <span>{lang}</span>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  style={{ padding: "2px 6px", fontSize: "11px", height: "auto" }}
+                  onClick={() => copyCode(code, index)}
+                >
+                  {copiedCodeIndex === index ? (
+                    <>
+                      <Check size={11} color="var(--success)" />
+                      <span style={{ color: "var(--success)" }}>Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy size={11} />
+                      <span>Copy</span>
+                    </>
+                  )}
+                </button>
+              </div>
+              <pre
+                style={{
+                  margin: 0,
+                  padding: "12px 14px",
+                  fontSize: "12.5px",
+                  lineHeight: 1.5,
+                  overflowX: "auto",
+                  fontFamily: "var(--font-mono)",
+                  color: "#D4D4D8",
+                }}
+              >
+                <code>{code}</code>
+              </pre>
+            </div>
+          );
+        }
+
+        // Render prose with markdown helpers
+        return (
+          <div key={index}>
+            {part.split("\n\n").map((para, pIdx) => {
+              const trimmed = para.trim();
+              if (!trimmed) return null;
+
+              // Headers
+              if (trimmed.startsWith("### ")) {
+                return (
+                  <h4 key={pIdx} style={{ fontSize: "14px", fontWeight: 700, margin: "14px 0 6px", color: "var(--text)" }}>
+                    {renderInline(trimmed.slice(4))}
+                  </h4>
+                );
+              }
+              if (trimmed.startsWith("## ")) {
+                return (
+                  <h3 key={pIdx} style={{ fontSize: "15px", fontWeight: 700, margin: "16px 0 8px", color: "var(--text)" }}>
+                    {renderInline(trimmed.slice(3))}
+                  </h3>
+                );
+              }
+
+              // List items
+              const lines = trimmed.split("\n");
+              const isList = lines.every((l) => /^\s*([*\-]|\d+\.)\s/.test(l));
+              if (isList) {
+                return (
+                  <ul key={pIdx} style={{ margin: "8px 0", paddingLeft: "20px" }}>
+                    {lines.map((l, lIdx) => (
+                      <li key={lIdx} style={{ marginBottom: "4px" }}>
+                        {renderInline(l.replace(/^\s*([*\-]|\d+\.)\s/, ""))}
+                      </li>
+                    ))}
+                  </ul>
+                );
+              }
+
+              // Normal paragraph
+              return (
+                <p key={pIdx} style={{ margin: "8px 0" }}>
+                  {lines.map((l, lIdx) => (
+                    <React.Fragment key={lIdx}>
+                      {renderInline(l)}
+                      {lIdx < lines.length - 1 && <br />}
+                    </React.Fragment>
+                  ))}
+                </p>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function renderInline(text: string): React.ReactNode {
+  // Parse inline `code` and **bold**
+  const tokens = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
+  return tokens.map((token, i) => {
+    if (token.startsWith("`") && token.endsWith("`")) {
+      return (
+        <code
+          key={i}
+          style={{
+            background: "rgba(255,255,255,0.06)",
+            border: "1px solid var(--border)",
+            padding: "2px 5px",
+            borderRadius: "4px",
+            fontSize: "12px",
+            fontFamily: "var(--font-mono)",
+            color: "var(--accent)",
+          }}
+        >
+          {token.slice(1, -1)}
+        </code>
+      );
+    }
+    if (token.startsWith("**") && token.endsWith("**")) {
+      return <strong key={i}>{token.slice(2, -2)}</strong>;
+    }
+    return token;
+  });
 }

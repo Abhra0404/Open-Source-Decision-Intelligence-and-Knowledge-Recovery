@@ -6,6 +6,7 @@ import {
   Zap,
   FolderGit2,
   Menu,
+  Search,
 } from "lucide-react";
 import { Repository, AppView } from "../types";
 
@@ -19,6 +20,7 @@ interface HeaderProps {
   isExtracting: boolean;
   isIngesting: boolean;
   onToggleMobileNav?: () => void;
+  onOpenCommandPalette?: () => void;
 }
 
 const VIEW_TITLES: Record<AppView, { title: string; subtitle: string }> = {
@@ -42,9 +44,9 @@ const VIEW_TITLES: Record<AppView, { title: string; subtitle: string }> = {
     title: "Decision Evolution",
     subtitle: "Chronological decision lineage and superseded paths",
   },
-  graph: {
+  "knowledge-graph": {
     title: "Knowledge Graph",
-    subtitle: "Visual topological network of technical decisions",
+    subtitle: "Visual network of engineering decisions, dependencies, and lineage",
   },
   discussions: {
     title: "Source Discussions",
@@ -70,6 +72,7 @@ export function Header({
   isExtracting,
   isIngesting,
   onToggleMobileNav,
+  onOpenCommandPalette,
 }: HeaderProps) {
   const meta = VIEW_TITLES[view] ?? { title: "Dashboard", subtitle: "" };
 
@@ -112,6 +115,37 @@ export function Header({
       </div>
 
       <div className="header-right">
+        {/* Quick jump command palette trigger */}
+        {onOpenCommandPalette && (
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={onOpenCommandPalette}
+            title="Open Command Palette (⌘K or Ctrl+K)"
+            style={{
+              padding: "5px 10px",
+              color: "var(--text-muted)",
+              background: "var(--surface)",
+              borderColor: "var(--border)",
+            }}
+          >
+            <Search size={13} color="var(--accent)" />
+            <span style={{ fontSize: "12px" }}>Quick Jump</span>
+            <kbd
+              style={{
+                fontSize: "10px",
+                fontFamily: "var(--font-mono)",
+                background: "var(--card)",
+                border: "1px solid var(--border)",
+                borderRadius: "4px",
+                padding: "1px 5px",
+                color: "var(--text-dim)",
+              }}
+            >
+              ⌘K
+            </kbd>
+          </button>
+        )}
+
         {/* Backend health pill */}
         <div className="header-status">
           <div className={`status-dot ${isExtracting || isIngesting ? "busy" : ""}`} />

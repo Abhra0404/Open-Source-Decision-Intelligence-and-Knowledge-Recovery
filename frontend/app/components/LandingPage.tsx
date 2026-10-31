@@ -47,7 +47,7 @@ export function LandingPage({ onLaunchApp }: LandingPageProps) {
       {/* ── Sticky Navigation Bar ────────────────────────────── */}
       <nav className="landing-nav">
         <div className="brand-link" onClick={onLaunchApp}>
-          <div className="brand-mark">M</div>
+          <img src="/logo.svg" alt="METIS" className="brand-logo-img" />
           <div className="brand-text">
             <span className="brand-title">METIS</span>
             <span className="brand-badge">Decision Intelligence</span>
@@ -587,7 +587,7 @@ export function LandingPage({ onLaunchApp }: LandingPageProps) {
         <div className="landing-footer-inner">
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
             <div className="brand-link" onClick={onLaunchApp}>
-              <div className="brand-mark">M</div>
+              <img src="/logo.svg" alt="METIS" className="brand-logo-img" />
               <span className="brand-title">METIS</span>
             </div>
             <p style={{ fontSize: "12px", color: "var(--text-dim)", maxWidth: "280px" }}>
