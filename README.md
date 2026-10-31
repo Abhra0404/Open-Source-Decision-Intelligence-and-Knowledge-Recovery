@@ -14,6 +14,17 @@ explain *why*. METIS is being built to connect those pieces of context.
 > model choices are subject to change as the team implements and
 > evaluates the system.
 
+## Implemented MVP capabilities
+
+The current local MVP includes GitHub discussion ingestion, deterministic and
+local Qwen3 8B extraction, evidence-grounded diagnostics, human decision
+review, repository-scoped Decision Intelligence Q&A, and pending/reviewed
+Decision Evolution relationships with timeline and graph APIs.
+
+Q&A uses PostgreSQL full-text retrieval and the configured local open-weight
+provider. It returns an insufficient-evidence response when no verified source
+can support an answer. Relationship proposals remain pending until reviewed.
+
 ------------------------------------------------------------------------
 
 ## The problem

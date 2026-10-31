@@ -75,3 +75,16 @@ class Evidence(BaseModel):
     excerpt: str | None
     source_url: str
     source_created_at: datetime | None
+
+
+class ConversationCreate(BaseModel):
+    title: str = Field(default="New conversation", min_length=1, max_length=200)
+
+
+class ChatMessageCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class RelationshipReviewRequest(BaseModel):
+    action: str = Field(pattern="^(approve|reject|request_review)$")
+    note: str | None = Field(default=None, max_length=2000)

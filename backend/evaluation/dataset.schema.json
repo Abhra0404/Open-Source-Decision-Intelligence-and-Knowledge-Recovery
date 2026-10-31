@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["discussion_id", "source_url", "expected_outcome", "evidence"],
+  "properties": {
+    "discussion_id": {"type": "string", "format": "uuid"},
+    "source_url": {"type": "string", "format": "uri"},
+    "expected_outcome": {"enum": ["accepted", "rejected", "proposed", "unresolved", "no_decision"]},
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["discussion_id", "source_url", "quote", "evidence_role"],
+        "properties": {
+          "discussion_id": {"type": "string", "format": "uuid"},
+          "source_url": {"type": "string", "format": "uri"},
+          "quote": {"type": "string", "minLength": 1},
+          "evidence_role": {"enum": ["proposal", "support", "objection", "acceptance", "rejection", "context"]}
+        }
+      }
+    },
+    "notes": {"type": "string"}
+  }
+}

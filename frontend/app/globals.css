@@ -432,6 +432,46 @@ body {
 .decision-row.selected { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .decision-pagination { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 12px 20px; border-top: 1px solid var(--line-sub); color: var(--text-3); font-size: 12px; }
 
+.intelligence-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 620px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); overflow: hidden; }
+.conversation-sidebar { border-right: 1px solid var(--line); background: var(--surface); }
+.conversation-item { width: 100%; padding: 10px 14px; border: 0; border-bottom: 1px solid var(--line-sub); background: transparent; color: var(--text-2); text-align: left; cursor: pointer; font: inherit; font-size: 12px; }
+.conversation-item:hover, .conversation-item.selected { background: var(--raised); color: var(--text); }
+.chat-panel { min-width: 0; display: flex; flex-direction: column; }
+.chat-subtitle { color: var(--text-3); font-size: 12px; margin-top: 3px; }
+.chat-empty { flex: 1; display: grid; place-content: center; gap: 10px; padding: 30px; text-align: center; color: var(--text-2); }
+.chat-empty h3 { color: var(--text); }
+.suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 680px; margin-top: 8px; }
+.chat-messages { flex: 1; padding: 20px; overflow-y: auto; }
+.chat-message { max-width: 78%; margin-bottom: 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.chat-message.user { margin-left: auto; background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
+.chat-message.assistant { background: var(--surface); }
+.chat-message p { white-space: pre-wrap; color: var(--text); }
+.chat-message small, .chat-role { display: block; color: var(--text-3); font-size: 10px; margin-bottom: 5px; text-transform: uppercase; letter-spacing: .06em; }
+.chat-source { display: block; color: var(--accent); font-size: 11px; margin-top: 8px; text-decoration: none; }
+.chat-source:hover { text-decoration: underline; }
+.evolution-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.evolution-panel select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 7px; }
+.toggle-label { color: var(--text-2); font-size: 12px; display: flex; align-items: center; gap: 5px; }
+.evolution-graph { overflow: auto; min-height: 360px; padding: 20px; background: var(--bg); }
+.graph-controls { display: flex; gap: 6px; position: sticky; left: 0; top: 0; z-index: 1; }
+.evolution-graph svg { width: 100%; min-width: 760px; min-height: 340px; }
+.graph-node { cursor: pointer; }
+.graph-node circle { fill: var(--raised); stroke: var(--accent); stroke-width: 2; }
+.graph-node:hover circle { fill: color-mix(in srgb, var(--accent) 18%, var(--raised)); }
+.graph-node text, .graph-edge text { fill: var(--text-2); font-size: 11px; text-anchor: middle; }
+.graph-edge { cursor: pointer; }
+.graph-edge line { stroke: var(--blue); stroke-width: 2; }
+.graph-edge.pending line { stroke: var(--orange); stroke-dasharray: 6 4; }
+.evolution-timeline { display: grid; gap: 0; border-top: 1px solid var(--line); }
+.timeline-entry { display: grid; grid-template-columns: 110px 1fr auto auto; align-items: center; gap: 12px; padding: 12px 20px; border: 0; border-bottom: 1px solid var(--line-sub); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.timeline-entry:hover { background: var(--raised); }
+.timeline-entry time { color: var(--text-3); font-size: 11px; }
+.timeline-entry strong { font-size: 13px; }
+.evolution-selection { padding: 18px 20px; border-top: 1px solid var(--line); background: var(--surface); }
+.evolution-selection h3 { margin: 12px 0 6px; }
+.chat-composer { display: flex; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--line); }
+.chat-composer input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--text); padding: 10px 12px; font: inherit; }
+
 .decision-detail { border-top: 1px solid var(--line); background: var(--surface); }
 .decision-detail h3 { font-size: 20px; margin-bottom: 8px; }
 .decision-detail h4 { margin: 20px 0 8px; color: var(--accent); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
@@ -664,6 +704,9 @@ body {
   }
 
   .decision-toolbar { grid-template-columns: 1fr; }
+  .intelligence-layout { grid-template-columns: 1fr; }
+  .conversation-sidebar { border-right: 0; border-bottom: 1px solid var(--line); max-height: 180px; overflow-y: auto; }
+  .timeline-entry { grid-template-columns: 1fr; gap: 5px; }
 
   .stats-row {
     grid-template-columns: 1fr 1fr;
