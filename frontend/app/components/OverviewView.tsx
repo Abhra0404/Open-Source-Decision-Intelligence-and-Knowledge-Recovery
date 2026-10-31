@@ -12,6 +12,7 @@ import {
   Zap,
   ArrowRight,
   GitPullRequest,
+  Sparkles,
 } from "lucide-react";
 import {
   Repository,
@@ -56,6 +57,25 @@ export function OverviewView({
   const pendingReviews = decisions.filter(
     (d) => d.review_status === "pending" || d.review_status === "needs_review"
   );
+
+  // Status breakdown calculations
+  const totalDecisions = decisions.length;
+  const acceptedCount = decisions.filter((d) => d.status === "accepted").length;
+  const rejectedCount = decisions.filter((d) => d.status === "rejected").length;
+  const proposedCount = decisions.filter((d) => d.status === "proposed").length;
+  const unresolvedCount = decisions.filter((d) => d.status === "unresolved").length;
+
+  const acceptedPct = totalDecisions > 0 ? (acceptedCount / totalDecisions) * 100 : 0;
+  const rejectedPct = totalDecisions > 0 ? (rejectedCount / totalDecisions) * 100 : 0;
+  const proposedPct = totalDecisions > 0 ? (proposedCount / totalDecisions) * 100 : 0;
+  const unresolvedPct = totalDecisions > 0 ? (unresolvedCount / totalDecisions) * 100 : 0;
+
+  // Average confidence calculation
+  const confScores = decisions.map((d) => d.confidence).filter((c): c is number => c !== null);
+  const avgConfidence =
+    confScores.length > 0
+      ? Math.round((confScores.reduce((a, b) => a + b, 0) / confScores.length) * 100)
+      : null;
 
   async function handleConnect(e: React.FormEvent) {
     e.preventDefault();
@@ -119,7 +139,7 @@ export function OverviewView({
           <div className="kpi-subtext">Awaiting maintainer audit</div>
         </div>
 
-        <div className="kpi-card" onClick={() => onNavigate("graph")} style={{ cursor: "pointer" }}>
+        <div className="kpi-card" onClick={() => onNavigate("evolution")} style={{ cursor: "pointer" }}>
           <div className="kpi-card-header">
             <span className="kpi-label">Relationships</span>
             <Network className="kpi-icon" />
@@ -130,6 +150,158 @@ export function OverviewView({
           <div className="kpi-subtext">Supersedes, refines & links</div>
         </div>
       </div>
+
+      {/* ── Active Repository Context Banner ──────────────────── */}
+      {selectedRepo ? (
+        <div
+          className="panel"
+          style={{
+            padding: "14px 20px",
+            marginBottom: "16px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "12px",
+            borderLeft: "3px solid var(--accent)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <FolderGit2 size={20} color="var(--accent)" />
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ fontWeight: 700, fontSize: "15px", color: "var(--text)" }}>
+                  {selectedRepo.full_name}
+                </span>
+                {selectedRepo.default_branch && (
+                  <span className="badge badge-neutral" style={{ fontSize: "11px" }}>
+                    branch: {selectedRepo.default_branch}
+                  </span>
+                )}
+                {selectedRepo.extraction_status && (
+                  <span className={`badge badge-${selectedRepo.extraction_status}`}>
+                    {selectedRepo.extraction_status}
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: "12px", color: "var(--text-dim)", marginTop: "2px" }}>
+                {decisions.length} decisions · {discussions.length} discussions ·{" "}
+                {avgConfidence !== null ? `${avgConfidence}% avg confidence` : "unrated"}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => onNavigate("intelligence")}
+            >
+              <Sparkles size={13} color="var(--accent)" />
+              Ask Questions
+            </button>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => onNavigate("knowledge-graph")}
+            >
+              <Network size={13} color="var(--purple)" />
+              Knowledge Graph
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── Decision Knowledge Distribution Bar ──────────────── */}
+      {totalDecisions > 0 && (
+        <div className="panel" style={{ marginBottom: "16px", padding: "16px 20px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: "14px", color: "var(--text)" }}>
+                Recovered Architectural Knowledge Distribution
+              </div>
+              <div style={{ fontSize: "12px", color: "var(--text-dim)", marginTop: "2px" }}>
+                Breakdown of accepted, rejected, proposed, and unresolved engineering choices
+              </div>
+            </div>
+            {avgConfidence !== null && (
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: "16px", fontWeight: 700, fontFamily: "var(--font-mono)", color: "var(--accent)" }}>
+                  {avgConfidence}%
+                </div>
+                <div style={{ fontSize: "11px", color: "var(--text-dim)" }}>Mean Confidence</div>
+              </div>
+            )}
+          </div>
+
+          {/* Segmented Progress Bar */}
+          <div
+            style={{
+              height: "10px",
+              borderRadius: "5px",
+              overflow: "hidden",
+              display: "flex",
+              background: "#1E2533",
+              marginBottom: "12px",
+            }}
+          >
+            {acceptedPct > 0 && (
+              <div
+                style={{ width: `${acceptedPct}%`, background: "var(--success)" }}
+                title={`Accepted: ${acceptedCount} (${acceptedPct.toFixed(1)}%)`}
+              />
+            )}
+            {rejectedPct > 0 && (
+              <div
+                style={{ width: `${rejectedPct}%`, background: "var(--danger)" }}
+                title={`Rejected: ${rejectedCount} (${rejectedPct.toFixed(1)}%)`}
+              />
+            )}
+            {proposedPct > 0 && (
+              <div
+                style={{ width: `${proposedPct}%`, background: "var(--accent)" }}
+                title={`Proposed: ${proposedCount} (${proposedPct.toFixed(1)}%)`}
+              />
+            )}
+            {unresolvedPct > 0 && (
+              <div
+                style={{ width: `${unresolvedPct}%`, background: "var(--warning)" }}
+                title={`Unresolved: ${unresolvedCount} (${unresolvedPct.toFixed(1)}%)`}
+              />
+            )}
+          </div>
+
+          {/* Legend and Shortcuts */}
+          <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", fontSize: "12px" }}>
+            <span
+              style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}
+              onClick={() => onNavigate("decisions")}
+            >
+              <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--success)" }} />
+              <strong>{acceptedCount}</strong> Accepted ({acceptedPct.toFixed(0)}%)
+            </span>
+            <span
+              style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}
+              onClick={() => onNavigate("decisions")}
+            >
+              <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--danger)" }} />
+              <strong>{rejectedCount}</strong> Rejected ({rejectedPct.toFixed(0)}%)
+            </span>
+            <span
+              style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}
+              onClick={() => onNavigate("decisions")}
+            >
+              <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--accent)" }} />
+              <strong>{proposedCount}</strong> Proposed ({proposedPct.toFixed(0)}%)
+            </span>
+            <span
+              style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}
+              onClick={() => onNavigate("decisions")}
+            >
+              <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--warning)" }} />
+              <strong>{unresolvedCount}</strong> Unresolved ({unresolvedPct.toFixed(0)}%)
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* ── Connect / Ingest Panel ───────────────────────────── */}
       <div className="panel">

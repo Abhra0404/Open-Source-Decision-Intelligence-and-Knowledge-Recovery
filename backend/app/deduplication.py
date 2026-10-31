@@ -20,6 +20,11 @@ _SUPERSEDING_PATTERN = re.compile(
     r"\b(?:supersed\w*|replac(?:e|es|ed|ing)|in place of|now use|switch(?:ed|ing)? to)\b",
     re.IGNORECASE,
 )
+_NEGATED_SUPERSEDING_PATTERN = re.compile(
+    r"\b(?:not|never|avoid|without|don't|doesn't|does not|did not|do not)"
+    r"(?:\s+\w+){0,2}\s*$",
+    re.IGNORECASE,
+)
 _SEMANTIC_EQUIVALENCE_THRESHOLD = 0.82
 
 
@@ -81,9 +86,10 @@ def match_candidate(
             )
 
     candidate_text = _decision_text(candidate)
+    explicitly_superseding = _explicitly_superseding(candidate_text)
     superseding_matches = [
         item for item in comparisons
-        if _SUPERSEDING_PATTERN.search(candidate_text)
+        if explicitly_superseding
         and (item[3] > 0 or item[2] >= 0.4 or item[4])
     ]
     if superseding_matches:
@@ -263,3 +269,11 @@ def _jaccard(left: set[object], right: set[object]) -> float:
 
 def _text_similarity(left: str, right: str) -> float:
     return _jaccard(set(_normalize(left).split()), set(_normalize(right).split()))
+
+
+def _explicitly_superseding(text: str) -> bool:
+    for match in _SUPERSEDING_PATTERN.finditer(text):
+        prefix = text[max(0, match.start() - 48):match.start()]
+        if not _NEGATED_SUPERSEDING_PATTERN.search(prefix):
+            return True
+    return False

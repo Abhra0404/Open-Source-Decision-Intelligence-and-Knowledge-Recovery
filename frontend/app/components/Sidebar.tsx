@@ -45,7 +45,7 @@ export function Sidebar({
       {/* Brand Header */}
       <div className="sidebar-header">
         <button className="brand-link" onClick={() => setView("overview")}>
-          <div className="brand-mark">M</div>
+          <img src="/logo.svg" alt="METIS" className="brand-logo-img" />
           {!collapsed && (
             <div className="brand-text">
               <span className="brand-title">METIS</span>
@@ -121,9 +121,9 @@ export function Sidebar({
             {!collapsed && <span>Evolution</span>}
           </button>
           <button
-            className={`nav-link ${view === "graph" ? "active" : ""}`}
-            onClick={() => setView("graph")}
-            title="Knowledge Graph"
+            className={`nav-link ${view === "knowledge-graph" ? "active" : ""}`}
+            onClick={() => setView("knowledge-graph")}
+            title="Interactive Knowledge Graph"
           >
             <Network className="nav-link-icon" size={17} />
             {!collapsed && <span>Knowledge Graph</span>}

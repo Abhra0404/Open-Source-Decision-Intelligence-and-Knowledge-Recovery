@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { LandingPage } from "./components/LandingPage";
 import { Sidebar } from "./components/Sidebar";
 import { Header } from "./components/Header";
@@ -13,6 +13,7 @@ import { KnowledgeGraphView } from "./components/KnowledgeGraphView";
 import { DiscussionsView } from "./components/DiscussionsView";
 import { DiagnosticsView } from "./components/DiagnosticsView";
 import { ModelConfigView } from "./components/ModelConfigView";
+import { CommandPalette } from "./components/CommandPalette";
 import {
   Repository,
   Decision,
@@ -23,11 +24,24 @@ import {
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
+const VALID_VIEWS: AppView[] = [
+  "overview",
+  "repositories",
+  "decisions",
+  "intelligence",
+  "evolution",
+  "knowledge-graph",
+  "discussions",
+  "diagnostics",
+  "model-config",
+];
+
 export default function Home() {
   // Mode: "landing" | "app"
   const [isLanding, setIsLanding] = useState<boolean>(true);
   const [currentView, setCurrentView] = useState<AppView>("overview");
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
 
   // Core Data
   const [repositories, setRepositories] = useState<Repository[]>([]);
@@ -45,13 +59,72 @@ export default function Home() {
   const [isExtracting, setIsExtracting] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>("");
 
-  // Check URL query parameters for initial mode on mount
+  // Synchronize URL and handle back/forward browser navigation
   useEffect(() => {
-    if (typeof window !== "undefined") {
+    if (typeof window === "undefined") return;
+
+    function applyUrlParams() {
       const params = new URLSearchParams(window.location.search);
-      if (params.get("view") === "dashboard" || params.get("mode") === "app") {
+      const viewParam = params.get("view") as AppView | null;
+      const modeParam = params.get("mode");
+
+      if (viewParam && VALID_VIEWS.includes(viewParam)) {
         setIsLanding(false);
+        setCurrentView(viewParam);
+      } else if (modeParam === "app" || modeParam === "dashboard") {
+        setIsLanding(false);
+      } else {
+        setIsLanding(true);
       }
+    }
+
+    applyUrlParams();
+    window.addEventListener("popstate", applyUrlParams);
+    return () => window.removeEventListener("popstate", applyUrlParams);
+  }, []);
+
+  // Global keyboard shortcut for Command Palette: ⌘K or Ctrl+K or /
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setIsCommandPaletteOpen((prev) => !prev);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const navigateToView = useCallback((newView: AppView) => {
+    setCurrentView(newView);
+    setIsLanding(false);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("view", newView);
+      url.searchParams.delete("mode");
+      window.history.pushState({ view: newView }, "", url.toString());
+    }
+  }, []);
+
+  const openApp = useCallback(() => {
+    setIsLanding(false);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("view", currentView || "overview");
+      window.history.pushState({ view: currentView || "overview" }, "", url.toString());
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [currentView]);
+
+  const returnToLanding = useCallback(() => {
+    setIsLanding(true);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("view");
+      url.searchParams.delete("mode");
+      window.history.pushState(null, "", url.pathname);
+      window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }, []);
 
@@ -71,7 +144,7 @@ export default function Home() {
         setSelectedRepoId(items[0].id);
       }
     } catch {
-      // Backend might be warming up
+      // Backend warming up
     }
   }
 
@@ -163,7 +236,6 @@ export default function Home() {
         throw new Error(registered.detail?.error?.message ?? "Failed to register repository");
       }
 
-      // Add to repository list and select
       await loadRepositories();
       setSelectedRepoId(registered.id);
 
@@ -230,7 +302,7 @@ export default function Home() {
         throw new Error("Extraction is taking longer than expected. Check diagnostics shortly.");
       }
 
-      // Refresh all data
+      // Refresh data
       await loadDecisions(selectedRepoId);
       await loadExtractions(selectedRepoId);
       await loadRelationships(selectedRepoId);
@@ -244,26 +316,23 @@ export default function Home() {
     }
   }
 
-  // If in public landing page mode, render LandingPage component
+  // Public Landing Page view
   if (isLanding) {
     return (
-      <LandingPage
-        onLaunchApp={() => {
-          setIsLanding(false);
-          window.scrollTo({ top: 0, behavior: "smooth" });
-        }}
-      />
+      <div className="mode-fade">
+        <LandingPage onLaunchApp={openApp} />
+      </div>
     );
   }
 
   const selectedRepo = repositories.find((r) => r.id === selectedRepoId) || null;
 
   return (
-    <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+    <div className={`app-shell mode-fade ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       {/* ── Persistent Sidebar Navigation ────────────────────── */}
       <Sidebar
         view={currentView}
-        setView={setCurrentView}
+        setView={navigateToView}
         counts={{
           repositories: repositories.length,
           decisions: decisions.length,
@@ -272,7 +341,7 @@ export default function Home() {
         }}
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
-        onGoToLanding={() => setIsLanding(true)}
+        onGoToLanding={returnToLanding}
       />
 
       {/* ── Main Application Shell ───────────────────────────── */}
@@ -286,86 +355,101 @@ export default function Home() {
           onExtract={handleExtractDecisions}
           isExtracting={isExtracting}
           isIngesting={isIngesting}
+          onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         />
 
         <main className="workspace-content">
-          {currentView === "overview" && (
-            <OverviewView
-              repositories={repositories}
-              selectedRepo={selectedRepo}
-              decisions={decisions}
-              discussions={discussions}
-              relationshipCount={relationshipCount}
-              recentExtractions={recentExtractions}
-              onSelectDecision={(id) => setSelectedDecisionId(id)}
-              onNavigate={(v) => setCurrentView(v)}
-              onConnectRepo={handleConnectRepo}
-              isIngesting={isIngesting}
-              statusMessage={statusMessage}
-            />
-          )}
+          <div key={currentView} className="view-container">
+            {currentView === "overview" && (
+              <OverviewView
+                repositories={repositories}
+                selectedRepo={selectedRepo}
+                decisions={decisions}
+                discussions={discussions}
+                relationshipCount={relationshipCount}
+                recentExtractions={recentExtractions}
+                onSelectDecision={(id) => setSelectedDecisionId(id)}
+                onNavigate={navigateToView}
+                onConnectRepo={handleConnectRepo}
+                isIngesting={isIngesting}
+                statusMessage={statusMessage}
+              />
+            )}
 
-          {currentView === "repositories" && (
-            <RepositoriesView
-              repositories={repositories}
-              selectedRepoId={selectedRepoId}
-              onSelectRepo={(id) => setSelectedRepoId(id)}
-              onConnectRepo={handleConnectRepo}
-              isIngesting={isIngesting}
-              statusMessage={statusMessage}
-            />
-          )}
+            {currentView === "repositories" && (
+              <RepositoriesView
+                repositories={repositories}
+                selectedRepoId={selectedRepoId}
+                onSelectRepo={(id) => setSelectedRepoId(id)}
+                onConnectRepo={handleConnectRepo}
+                isIngesting={isIngesting}
+                statusMessage={statusMessage}
+              />
+            )}
 
-          {currentView === "decisions" && (
-            <DecisionsView
-              decisions={decisions}
-              selectedDecisionId={selectedDecisionId}
-              onSelectDecision={setSelectedDecisionId}
-              onRefresh={() => selectedRepoId && loadDecisions(selectedRepoId)}
-            />
-          )}
+            {currentView === "decisions" && (
+              <DecisionsView
+                decisions={decisions}
+                selectedDecisionId={selectedDecisionId}
+                onSelectDecision={setSelectedDecisionId}
+                onRefresh={() => selectedRepoId && loadDecisions(selectedRepoId)}
+              />
+            )}
 
-          {currentView === "intelligence" && (
-            <IntelligenceView repositoryId={selectedRepoId} />
-          )}
+            {currentView === "intelligence" && (
+              <IntelligenceView repositoryId={selectedRepoId} />
+            )}
 
-          {currentView === "evolution" && (
-            <EvolutionView
-              repositoryId={selectedRepoId}
-              onSelectDecision={(id) => {
-                setSelectedDecisionId(id);
-                setCurrentView("decisions");
-              }}
-            />
-          )}
+            {currentView === "evolution" && (
+              <EvolutionView
+                repositoryId={selectedRepoId}
+                onSelectDecision={(id) => {
+                  setSelectedDecisionId(id);
+                  navigateToView("decisions");
+                }}
+              />
+            )}
 
-          {currentView === "graph" && (
-            <KnowledgeGraphView
-              repositoryId={selectedRepoId}
-              onSelectDecision={(id) => {
-                setSelectedDecisionId(id);
-                setCurrentView("decisions");
-              }}
-            />
-          )}
+            {currentView === "knowledge-graph" && (
+              <KnowledgeGraphView
+                repositoryId={selectedRepoId}
+                onSelectDecision={(id) => {
+                  setSelectedDecisionId(id);
+                  navigateToView("decisions");
+                }}
+              />
+            )}
 
-          {currentView === "discussions" && (
-            <DiscussionsView
-              discussions={discussions}
-              onRefresh={() => selectedRepoId && loadDiscussions(selectedRepoId)}
-            />
-          )}
+            {currentView === "discussions" && (
+              <DiscussionsView
+                discussions={discussions}
+                onRefresh={() => selectedRepoId && loadDiscussions(selectedRepoId)}
+              />
+            )}
 
-          {currentView === "diagnostics" && (
-            <DiagnosticsView
-              repositoryId={selectedRepoId}
-              onRefresh={() => selectedRepoId && loadExtractions(selectedRepoId)}
-            />
-          )}
+            {currentView === "diagnostics" && (
+              <DiagnosticsView
+                repositoryId={selectedRepoId}
+                onRefresh={() => selectedRepoId && loadExtractions(selectedRepoId)}
+              />
+            )}
 
-          {currentView === "model-config" && <ModelConfigView />}
+            {currentView === "model-config" && <ModelConfigView />}
+          </div>
         </main>
       </div>
+
+      {/* ── Command Palette (⌘K) ─────────────────────────────── */}
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        onNavigate={navigateToView}
+        repositories={repositories}
+        onSelectRepo={(id) => {
+          setSelectedRepoId(id);
+          setIsCommandPaletteOpen(false);
+        }}
+      />
     </div>
   );
 }

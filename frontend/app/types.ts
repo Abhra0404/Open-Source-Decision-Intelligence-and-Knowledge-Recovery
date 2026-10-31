@@ -7,6 +7,10 @@ export type Repository = {
   is_private?: boolean;
   created_at?: string;
   updated_at?: string;
+  discussions_count?: number;
+  decisions_count?: number;
+  last_ingested_at?: string | null;
+  extraction_status?: string | null;
 };
 
 export type DecisionStatus = "accepted" | "rejected" | "proposed" | "unresolved";
@@ -33,10 +37,22 @@ export type ReviewHistoryEntry = {
   created_at: string;
 };
 
+export type RelatedDecision = {
+  id: string;
+  relationship_type: string;
+  explanation: string;
+  confidence: number;
+  review_status: string;
+  related_decision_id: string;
+  related_decision_title: string;
+  direction: "outgoing" | "incoming";
+};
+
 export type Decision = {
   id: string;
   repository_id?: string;
   repository_name?: string;
+  source_discussion_id?: string | null;
   title: string;
   summary: string;
   status: DecisionStatus;
@@ -55,6 +71,15 @@ export type Decision = {
 export type DecisionDetail = Decision & {
   evidence: DecisionEvidence[];
   review_history: ReviewHistoryEntry[];
+  related_decisions?: RelatedDecision[];
+  source_discussion?: {
+    id: string;
+    source_type: string;
+    title: string | null;
+    source_url: string;
+    author_login: string | null;
+    source_created_at: string | null;
+  } | null;
 };
 
 export type Discussion = {
@@ -69,9 +94,33 @@ export type Discussion = {
 
 export type ChatMessageSource = {
   evidence_id: string;
+  decision_id?: string;
+  decision_title?: string;
+  decision_status?: DecisionStatus;
+  review_status?: ReviewStatus;
+  review_reason?: string | null;
+  decision_is_active?: boolean;
   evidence_role: string;
   excerpt: string | null;
+  source_title?: string | null;
   source_url: string;
+};
+
+export type QADiagnostics = {
+  repository_id: string;
+  original_question: string;
+  normalized_query: string;
+  candidate_decisions_retrieved: number;
+  decisions_remaining_after_filtering: number;
+  evidence_records_retrieved: number;
+  evidence_records_passing_validation: number;
+  retrieval_strategy: string;
+  relevance_scores: Array<{ decision_id: string; score: number }>;
+  minimum_relevance_threshold: number;
+  llm_invoked: boolean;
+  fallback_reason: string | null;
+  llm_error_stage?: string | null;
+  llm_error_code?: string | null;
 };
 
 export type ChatMessage = {
@@ -85,6 +134,7 @@ export type ChatMessage = {
   generation_latency_ms?: number | null;
   retrieved_evidence_count?: number | null;
   citation_count?: number | null;
+  qa_diagnostics?: QADiagnostics | null;
   sources?: ChatMessageSource[];
 };
 
@@ -245,7 +295,7 @@ export type AppView =
   | "decisions"
   | "intelligence"
   | "evolution"
-  | "graph"
+  | "knowledge-graph"
   | "discussions"
   | "diagnostics"
   | "model-config";

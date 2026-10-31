@@ -15,6 +15,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from .extraction import DiscussionInput, ExtractedDecision, extract_candidate
+from .qa_logging import log_qa_event
 from .relationships import RelationshipProposal
 
 
@@ -106,10 +107,27 @@ class DeterministicProvider:
         if not context:
             answer = "I couldn't find sufficient evidence in this repository to answer that question."
             citations: list[str] = []
+            log_qa_event("qa.fallback_triggered", reason="provider_received_no_context", llm_invoked=False)
         else:
-            lines = [f"Based on the retrieved repository evidence, {item['summary']} [{item['evidence_id']}]" for item in context[:3]]
+            lines: list[str] = []
+            citations = []
+            seen_decisions: set[str] = set()
+            for item in context:
+                decision_id = str(item["decision_id"])
+                if decision_id in seen_decisions:
+                    continue
+                seen_decisions.add(decision_id)
+                citations.append(str(item["evidence_id"]))
+                excerpt = str(item["excerpt"]).strip()
+                lines.append(
+                    f"{item['decision_title']} is {item['decision_status']} and has "
+                    f"review status {item['review_status']}. {item['decision_summary']} "
+                    f'Source evidence ({item["evidence_role"]}): "{excerpt}" '
+                    f"{item['source_url']} [{item['evidence_id']}]"
+                )
+                if len(lines) == 3:
+                    break
             answer = " ".join(lines)
-            citations = [str(item["evidence_id"]) for item in context[:3]]
         return AnswerResult(answer, citations, "deterministic", "rule-based-mvp", latency_ms=int((time.monotonic() - started) * 1000))
 
     def propose_relationships(self, decisions: list[dict[str, object]]) -> RelationshipResult:
@@ -221,8 +239,14 @@ class OpenWeightLLMProvider:
             "history": history[-6:],
             "evidence": context,
             "rules": [
-                "Use only the supplied evidence.",
+                "Use only the supplied source discussion text, evidence excerpts, and decision fields.",
                 "Cite factual claims with evidence_id values from the supplied evidence.",
+                "Identify the decision title and distinguish its decision_status from review_status.",
+                "Do not describe proposed or unresolved decisions as accepted.",
+                "Treat needs_review decisions and inactive historical decisions as uncertain context.",
+                "Explain relevant rationale, alternatives, and trade-offs only when present in the supplied fields.",
+                "Include source_title or source_url when identifying where the evidence came from.",
+                "Use conversation history only to resolve follow-up references, never as factual evidence.",
                 "If evidence is insufficient, say exactly: I couldn't find sufficient evidence in this repository to answer that question.",
                 "Return JSON with exactly answer (string) and citations (array of evidence_id strings).",
             ],
@@ -232,7 +256,13 @@ class OpenWeightLLMProvider:
             "temperature": 0,
             "response_format": {"type": "json_object"},
             "messages": [
-                {"role": "system", "content": "You answer repository-history questions using only cited evidence."},
+                {
+                    "role": "system",
+                    "content": (
+                        "You answer repository-history questions using only the supplied "
+                        "evidence. Preserve uncertainty and cite every factual claim."
+                    ),
+                },
                 {"role": "user", "content": json.dumps(prompt, ensure_ascii=True)},
             ],
         })
