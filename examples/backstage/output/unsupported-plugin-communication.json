@@ -1,0 +1,48 @@
+{
+  "user_message_id": "8a32c22b-5fff-4b32-9970-86ffb193dc4a",
+  "message": {
+    "id": "3452fb5a-d413-4f35-bb77-5dfbd75beb4c",
+    "conversation_id": "0cb9c293-b94b-4326-83f1-76da013508c9",
+    "role": "assistant",
+    "content": "I couldn't find sufficient evidence in this repository to answer that question.",
+    "provider": "deterministic",
+    "model_name": "qwen3:8b",
+    "prompt_version": "qa-v1",
+    "retrieval_latency_ms": 5,
+    "generation_latency_ms": null,
+    "retrieved_evidence_count": 0,
+    "citation_count": 0,
+    "created_at": "2026-11-01T00:16:51.953303Z",
+    "qa_diagnostics": {
+      "request_id": "67ad547d-b8cd-4de3-b926-fc25521d25ca",
+      "llm_invoked": false,
+      "repository_id": "16c18238-5b49-4eb7-afde-af7d66dd6b8b",
+      "fallback_reason": "no_matching_decisions",
+      "normalized_query": "accepted explain backstage plugins communicate one another",
+      "relevance_scores": [],
+      "original_question": "Which accepted decisions explain how Backstage plugins should communicate with one another?",
+      "retrieval_strategy": "no_match",
+      "evidence_records_retrieved": 0,
+      "minimum_relevance_threshold": 0.3,
+      "candidate_decisions_retrieved": 0,
+      "decisions_remaining_after_filtering": 0,
+      "evidence_records_passing_validation": 0
+    }
+  },
+  "sources": [],
+  "diagnostics": {
+    "repository_id": "16c18238-5b49-4eb7-afde-af7d66dd6b8b",
+    "original_question": "Which accepted decisions explain how Backstage plugins should communicate with one another?",
+    "normalized_query": "accepted explain backstage plugins communicate one another",
+    "candidate_decisions_retrieved": 0,
+    "decisions_remaining_after_filtering": 0,
+    "evidence_records_retrieved": 0,
+    "evidence_records_passing_validation": 0,
+    "retrieval_strategy": "no_match",
+    "relevance_scores": [],
+    "minimum_relevance_threshold": 0.3,
+    "llm_invoked": false,
+    "fallback_reason": "no_matching_decisions",
+    "request_id": "67ad547d-b8cd-4de3-b926-fc25521d25ca"
+  }
+}

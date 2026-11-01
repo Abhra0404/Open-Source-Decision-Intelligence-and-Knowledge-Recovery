@@ -8,7 +8,6 @@ import {
   FileCheck2,
   Sparkles,
   History,
-  Network,
   MessagesSquare,
   Activity,
   Sliders,
@@ -108,17 +107,6 @@ export function CommandPalette({
       category: "Navigation",
       action: () => {
         onNavigate("evolution");
-        onClose();
-      },
-    },
-    {
-      id: "nav-knowledge-graph",
-      title: "Interactive Knowledge Graph",
-      subtitle: "Visual decision network, supersedes & depends_on links",
-      icon: <Network size={16} color="var(--purple)" />,
-      category: "Navigation",
-      action: () => {
-        onNavigate("knowledge-graph");
         onClose();
       },
     },

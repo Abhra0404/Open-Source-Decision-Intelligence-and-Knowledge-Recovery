@@ -449,6 +449,7 @@ export function DecisionsView({
                     ✕
                   </button>
                 </div>
+                <div className="drawer-body">
 
                 {/* Original GitHub Discussion Context */}
                 {detail.source_discussion && (
@@ -731,6 +732,7 @@ export function DecisionsView({
                     </div>
                   </div>
                 )}
+                </div>{/* drawer-body */}
               </>
             ) : (
               <div className="state-empty">Decision not found</div>

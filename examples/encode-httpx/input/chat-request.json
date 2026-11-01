@@ -1,0 +1,22 @@
+{
+  "repository": {
+    "id": "3cabfd2b-eb57-4019-8023-75c31d246be2",
+    "full_name": "encode/httpx"
+  },
+  "conversation": {
+    "id": "6c75915d-16cc-41bb-a765-7acc09185419",
+    "title": "HTTPX redirect method behavior",
+    "created_at": "2026-11-01T00:23:26.741697Z"
+  },
+  "submission": {
+    "method": "POST",
+    "endpoint": "http://127.0.0.1:8000/api/v1/chat/conversations/6c75915d-16cc-41bb-a765-7acc09185419/messages",
+    "body": {
+      "content": "What change was proposed for HTTPX 301/302 redirects, and what concern did maintainers raise about adding the option? Is the decision accepted or unresolved?"
+    }
+  },
+  "response_capture": {
+    "method": "GET",
+    "endpoint": "http://127.0.0.1:8000/api/v1/chat/conversations/6c75915d-16cc-41bb-a765-7acc09185419"
+  }
+}

@@ -43,7 +43,8 @@ export function RepositoriesView({
   const [sortBy, setSortBy] = useState<SortOption>("decisions");
   const [filterBy, setFilterBy] = useState<string>("all");
   const [modalOpen, setModalOpen] = useState(false);
-  const [repoUrl, setRepoUrl] = useState("");
+  const DEFAULT_REPO = "pallets/click";
+  const [repoUrl, setRepoUrl] = useState(DEFAULT_REPO);
 
   const filtered = repositories
     .filter((repo) => {
@@ -71,7 +72,7 @@ export function RepositoriesView({
     e.preventDefault();
     if (!repoUrl.trim()) return;
     await onConnectRepo(repoUrl.trim());
-    setRepoUrl("");
+    setRepoUrl(DEFAULT_REPO);
     setModalOpen(false);
   }
 
@@ -194,7 +195,7 @@ export function RepositoriesView({
                   </label>
                   <input
                     className="input"
-                    placeholder="https://github.com/fastapi/fastapi or pallets/click"
+                    placeholder="https://github.com/pallets/click or owner/repo"
                     value={repoUrl}
                     onChange={(e) => setRepoUrl(e.target.value)}
                     required

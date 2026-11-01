@@ -1,0 +1,89 @@
+{
+  "id": "6c75915d-16cc-41bb-a765-7acc09185419",
+  "repository_id": "3cabfd2b-eb57-4019-8023-75c31d246be2",
+  "title": "HTTPX redirect method behavior",
+  "created_at": "2026-11-01T00:23:26.741697Z",
+  "updated_at": "2026-11-01T00:23:32.231851Z",
+  "messages": [
+    {
+      "id": "b1666b9e-ff3c-4da7-8a58-8d905e0d6d0b",
+      "conversation_id": "6c75915d-16cc-41bb-a765-7acc09185419",
+      "role": "user",
+      "content": "What change was proposed for HTTPX 301/302 redirects, and what concern did maintainers raise about adding the option? Is the decision accepted or unresolved?",
+      "provider": null,
+      "model_name": null,
+      "prompt_version": "qa-v1",
+      "retrieval_latency_ms": null,
+      "generation_latency_ms": null,
+      "retrieved_evidence_count": 0,
+      "citation_count": 0,
+      "created_at": "2026-11-01T00:23:32.231851Z",
+      "qa_diagnostics": null,
+      "sources": []
+    },
+    {
+      "id": "ff0d2799-a81b-4980-a107-021c7b89cff1",
+      "conversation_id": "6c75915d-16cc-41bb-a765-7acc09185419",
+      "role": "assistant",
+      "content": "The proposed change was to add an option to HTTPX clients to keep the same HTTP method for 301/302 redirects instead of switching to GET, as the RFC is not clear on the expected behavior and some server applications expect the legacy behavior [e57b53bf-a0bb-4f73-af89-4a8ea94360f1]. A maintainer raised the concern that they would rather not have configuration options to support esoteric configurations, suggesting that redirects should be disabled and handled directly for such use cases [a0e5649a-3470-4ca8-90bb-0025a5e90d79]. The decision is currently unresolved, with a review status of needs_review [e57b53bf-a0bb-4f73-af89-4a8ea94360f1].",
+      "provider": "groq",
+      "model_name": "qwen/qwen3.8-27b",
+      "prompt_version": "qa-v1",
+      "retrieval_latency_ms": 36,
+      "generation_latency_ms": 824,
+      "retrieved_evidence_count": 3,
+      "citation_count": 2,
+      "created_at": "2026-11-01T00:23:32.231851Z",
+      "qa_diagnostics": {
+        "request_id": "c1eb4c12-2e01-4b60-8b64-87dc372806dc",
+        "llm_invoked": true,
+        "repository_id": "3cabfd2b-eb57-4019-8023-75c31d246be2",
+        "fallback_reason": null,
+        "normalized_query": "change proposed httpx 301 302 redirects concern maintainers raise adding option accepted unresolved",
+        "relevance_scores": [
+          {"score": 0.46153846153846156, "decision_id": "636baf23-11bb-436c-aac0-888a6303af98"},
+          {"score": 0.15384615384615385, "decision_id": "4a5563f4-405b-4170-9de0-24fde3e3c470"},
+          {"score": 0.15384615384615385, "decision_id": "929546af-43af-44d2-b6cf-217a50337a54"},
+          {"score": 0.15384615384615385, "decision_id": "b64caf98-c468-449f-9eff-b0fe4e2a5381"},
+          {"score": 0.15384615384615385, "decision_id": "c99701a8-f470-4215-b3b0-9a788387b518"},
+          {"score": 0.15384615384615385, "decision_id": "ead80479-ff5f-43a3-bc42-beff8d458189"}
+        ],
+        "original_question": "What change was proposed for HTTPX 301/302 redirects, and what concern did maintainers raise about adding the option? Is the decision accepted or unresolved?",
+        "retrieval_strategy": "full_text_or+token_coverage_v1",
+        "evidence_records_retrieved": 3,
+        "minimum_relevance_threshold": 0.3,
+        "candidate_decisions_retrieved": 6,
+        "decisions_remaining_after_filtering": 1,
+        "evidence_records_passing_validation": 3
+      },
+      "sources": [
+        {
+          "evidence_id": "e57b53bf-a0bb-4f73-af89-4a8ea94360f1",
+          "decision_id": "636baf23-11bb-436c-aac0-888a6303af98",
+          "decision_title": "Add option to keep the same method for 301/302 redirects",
+          "decision_status": "unresolved",
+          "review_status": "needs_review",
+          "review_reason": "evidence role does not match the cited source content",
+          "decision_is_active": true,
+          "evidence_role": "proposal",
+          "excerpt": "Add new option to clients to select the behavior.",
+          "source_title": "Add option to keep the same method for 301/302 redirects",
+          "source_url": "https://github.com/encode/httpx/pull/3783"
+        },
+        {
+          "evidence_id": "a0e5649a-3470-4ca8-90bb-0025a5e90d79",
+          "decision_id": "636baf23-11bb-436c-aac0-888a6303af98",
+          "decision_title": "Add option to keep the same method for 301/302 redirects",
+          "decision_status": "unresolved",
+          "review_status": "needs_review",
+          "review_reason": "evidence role does not match the cited source content",
+          "decision_is_active": true,
+          "evidence_role": "objection",
+          "excerpt": "I'd rather not have configuration options to support esoteric configurations.",
+          "source_title": null,
+          "source_url": "https://github.com/encode/httpx/pull/3783#issuecomment-5736724354"
+        }
+      ]
+    }
+  ]
+}

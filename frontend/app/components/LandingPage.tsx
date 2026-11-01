@@ -12,7 +12,6 @@ import {
   FileCode2,
   Sparkles,
   Layers,
-  Network,
   History,
   ExternalLink,
   Code2,
@@ -71,7 +70,7 @@ export function LandingPage({ onLaunchApp }: LandingPageProps) {
 
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           <a
-            href="https://github.com"
+            href="https://github.com/Abhra0404/Open-Source-Decision-Intelligence-and-Knowledge-Recovery"
             target="_blank"
             rel="noreferrer"
             className="btn btn-ghost btn-sm"
@@ -110,7 +109,7 @@ export function LandingPage({ onLaunchApp }: LandingPageProps) {
             <ArrowRight size={16} />
           </button>
           <a
-            href="https://github.com"
+            href="https://github.com/Abhra0404/Open-Source-Decision-Intelligence-and-Knowledge-Recovery"
             target="_blank"
             rel="noreferrer"
             className="btn btn-secondary btn-lg"
@@ -387,10 +386,10 @@ export function LandingPage({ onLaunchApp }: LandingPageProps) {
 
           <div className="workflow-step">
             <div className="workflow-step-num">6</div>
-            <Network size={20} color="var(--purple)" />
-            <div className="workflow-step-title">Knowledge Graph</div>
+            <History size={20} color="var(--warning)" />
+            <div className="workflow-step-title">Decision Evolution</div>
             <p style={{ fontSize: "11px", color: "var(--text-dim)" }}>
-              Supersedes & refines lineages
+              Trace reviewed changes in technical direction
             </p>
           </div>
         </div>
@@ -445,11 +444,11 @@ export function LandingPage({ onLaunchApp }: LandingPageProps) {
           </div>
 
           <div className="editorial-card">
-            <Network size={24} color="var(--purple)" />
-            <h3 className="editorial-title">Interactive Knowledge Graph</h3>
+            <History size={24} color="var(--warning)" />
+            <h3 className="editorial-title">Decision Evolution</h3>
             <p className="editorial-desc">
-              Explore interconnected decision topologies. Inspect relationship edges, review confidence
-              scores, and verify evidence dependencies before shipping new architectural changes.
+              Follow chronological decision history and inspect reviewed relationships such as
+              superseding, refining, and contradicting choices.
             </p>
           </div>
 
@@ -528,7 +527,7 @@ export function LandingPage({ onLaunchApp }: LandingPageProps) {
                 <h4 style={{ fontSize: "14px", color: "var(--text)" }}>4. Next.js 15 UI</h4>
               </div>
               <p style={{ fontSize: "12px", color: "var(--text-muted)", lineHeight: 1.6 }}>
-                Dark-first dashboard shell with responsive sidebar, knowledge graph visualization,
+                Dark-first dashboard shell with responsive sidebar, decision evolution timeline,
                 real-time diagnostics, and audit workflow.
               </p>
             </div>
@@ -570,7 +569,7 @@ export function LandingPage({ onLaunchApp }: LandingPageProps) {
               <ArrowRight size={14} />
             </button>
             <a
-              href="https://github.com"
+              href="https://github.com/Abhra0404/Open-Source-Decision-Intelligence-and-Knowledge-Recovery"
               target="_blank"
               rel="noreferrer"
               className="btn btn-secondary"
@@ -613,7 +612,7 @@ export function LandingPage({ onLaunchApp }: LandingPageProps) {
                 AI Assistant
               </span>
               <span style={{ cursor: "pointer", color: "var(--text-muted)" }} onClick={onLaunchApp}>
-                Knowledge Graph
+                Decision Evolution
               </span>
             </div>
           </div>
@@ -637,7 +636,7 @@ export function LandingPage({ onLaunchApp }: LandingPageProps) {
               <a href="http://localhost:8000/docs" target="_blank" rel="noreferrer" style={{ color: "var(--text-muted)" }}>
                 FastAPI Swagger Docs ↗
               </a>
-              <a href="https://github.com" target="_blank" rel="noreferrer" style={{ color: "var(--text-muted)" }}>
+              <a href="https://github.com/Abhra0404/Open-Source-Decision-Intelligence-and-Knowledge-Recovery" target="_blank" rel="noreferrer" style={{ color: "var(--text-muted)" }}>
                 GitHub Repository ↗
               </a>
             </div>

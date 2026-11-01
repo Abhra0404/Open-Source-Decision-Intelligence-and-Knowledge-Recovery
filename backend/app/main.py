@@ -195,6 +195,17 @@ def get_chat_conversation(conversation_id: UUID, conn: Connection = Depends(get_
     return conversation
 
 
+@app.delete("/api/v1/chat/conversations/{conversation_id}")
+def delete_chat_conversation(conversation_id: UUID, conn: Connection = Depends(get_connection)) -> dict:
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM chat_conversations WHERE id = %s", (conversation_id,))
+        if not cur.fetchone():
+            raise error("CONVERSATION_NOT_FOUND", "The conversation was not found.", 404)
+        cur.execute("DELETE FROM chat_conversations WHERE id = %s", (conversation_id,))
+    conn.commit()
+    return {"deleted": True, "id": str(conversation_id)}
+
+
 @app.get("/api/v1/chat/conversations/{conversation_id}/messages")
 def list_chat_messages(conversation_id: UUID, conn: Connection = Depends(get_connection)) -> dict:
     with conn.cursor() as cur:

@@ -3,10 +3,9 @@
 import React from "react";
 import {
   RefreshCw,
-  Zap,
   FolderGit2,
   Menu,
-  Search,
+  Home,
 } from "lucide-react";
 import { Repository, AppView } from "../types";
 
@@ -20,7 +19,7 @@ interface HeaderProps {
   isExtracting: boolean;
   isIngesting: boolean;
   onToggleMobileNav?: () => void;
-  onOpenCommandPalette?: () => void;
+  onGoHome?: () => void;
 }
 
 const VIEW_TITLES: Record<AppView, { title: string; subtitle: string }> = {
@@ -43,10 +42,6 @@ const VIEW_TITLES: Record<AppView, { title: string; subtitle: string }> = {
   evolution: {
     title: "Decision Evolution",
     subtitle: "Chronological decision lineage and superseded paths",
-  },
-  "knowledge-graph": {
-    title: "Knowledge Graph",
-    subtitle: "Visual network of engineering decisions, dependencies, and lineage",
   },
   discussions: {
     title: "Source Discussions",
@@ -72,7 +67,7 @@ export function Header({
   isExtracting,
   isIngesting,
   onToggleMobileNav,
-  onOpenCommandPalette,
+  onGoHome,
 }: HeaderProps) {
   const meta = VIEW_TITLES[view] ?? { title: "Dashboard", subtitle: "" };
 
@@ -115,34 +110,25 @@ export function Header({
       </div>
 
       <div className="header-right">
-        {/* Quick jump command palette trigger */}
-        {onOpenCommandPalette && (
+        {/* Home navigation button */}
+        {onGoHome && (
           <button
             className="btn btn-secondary btn-sm"
-            onClick={onOpenCommandPalette}
-            title="Open Command Palette (⌘K or Ctrl+K)"
+            onClick={onGoHome}
+            title="Return to Public Landing Page"
             style={{
-              padding: "5px 10px",
-              color: "var(--text-muted)",
-              background: "var(--surface)",
+              padding: "5px 12px",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "12px",
+              color: "var(--text)",
               borderColor: "var(--border)",
+              background: "var(--surface)",
             }}
           >
-            <Search size={13} color="var(--accent)" />
-            <span style={{ fontSize: "12px" }}>Quick Jump</span>
-            <kbd
-              style={{
-                fontSize: "10px",
-                fontFamily: "var(--font-mono)",
-                background: "var(--card)",
-                border: "1px solid var(--border)",
-                borderRadius: "4px",
-                padding: "1px 5px",
-                color: "var(--text-dim)",
-              }}
-            >
-              ⌘K
-            </kbd>
+            <Home size={14} color="var(--accent)" />
+            <span>Home</span>
           </button>
         )}
 
@@ -153,27 +139,15 @@ export function Header({
         </div>
 
         {selectedRepoId && (
-          <>
-            <button
-              className="btn btn-secondary btn-sm"
-              onClick={onRefresh}
-              title="Refresh repository data"
-              disabled={isExtracting || isIngesting}
-            >
-              <RefreshCw size={13} className={isExtracting || isIngesting ? "spinner" : ""} />
-              Refresh
-            </button>
-
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={onExtract}
-              disabled={isExtracting}
-              title="Trigger evidence-backed decision extraction"
-            >
-              <Zap size={13} />
-              {isExtracting ? "Extracting…" : "Extract Decisions"}
-            </button>
-          </>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={onRefresh}
+            title="Refresh repository data"
+            disabled={isExtracting || isIngesting}
+          >
+            <RefreshCw size={13} className={isExtracting || isIngesting ? "spinner" : ""} />
+            Refresh
+          </button>
         )}
       </div>
     </header>
