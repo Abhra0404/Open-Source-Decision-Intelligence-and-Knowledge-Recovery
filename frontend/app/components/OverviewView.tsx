@@ -94,28 +94,28 @@ export function OverviewView({
 
       <div className="overview-kpis" aria-label="Repository summary">
         <div className="overview-kpi">
-          <span className="overview-kpi-icon overview-kpi-icon-blue"><FileCheck2 size={16} /></span>
+          <span className="overview-kpi-icon overview-kpi-icon-blue" aria-hidden="true"><FileCheck2 size={18} /></span>
           <div>
             <strong>{decisions.length}</strong>
             <span>Decisions recovered</span>
           </div>
         </div>
         <div className="overview-kpi">
-          <span className="overview-kpi-icon overview-kpi-icon-purple"><GitPullRequest size={16} /></span>
+          <span className="overview-kpi-icon overview-kpi-icon-purple" aria-hidden="true"><GitPullRequest size={18} /></span>
           <div>
             <strong>{discussions.length}</strong>
             <span>Source discussions</span>
           </div>
         </div>
         <div className="overview-kpi">
-          <span className="overview-kpi-icon overview-kpi-icon-green"><Network size={16} /></span>
+          <span className="overview-kpi-icon overview-kpi-icon-green" aria-hidden="true"><Network size={18} /></span>
           <div>
             <strong>{relationshipCount}</strong>
             <span>Decision relationships</span>
           </div>
         </div>
         <div className="overview-kpi">
-          <span className="overview-kpi-icon overview-kpi-icon-amber"><Sparkles size={16} /></span>
+          <span className="overview-kpi-icon overview-kpi-icon-amber" aria-hidden="true"><Sparkles size={18} /></span>
           <div>
             <strong>{avgConfidence !== null ? `${avgConfidence}%` : "—"}</strong>
             <span>Average confidence</span>

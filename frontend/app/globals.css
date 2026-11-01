@@ -446,8 +446,10 @@ p {
 
 .overview-kpi {
   display: flex;
-  align-items: center;
-  gap: 11px;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
   min-height: 76px;
   padding: 14px 16px;
   border: 1px solid var(--border);
@@ -463,11 +465,22 @@ p {
 
 .overview-kpi-icon {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   place-items: center;
   flex-shrink: 0;
   border-radius: 9px;
+  border: 1px solid currentColor;
+  opacity: 0.95;
+  padding: 7px;
+}
+
+.overview-kpi-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 18px;
+  max-height: 18px;
 }
 
 .overview-kpi-icon-blue { color: var(--accent); background: var(--accent-bg); }
@@ -482,15 +495,21 @@ p {
 
 .overview-kpi strong {
   font-family: var(--font-mono);
-  font-size: 20px;
+  font-size: 22px;
   line-height: 1.15;
   letter-spacing: -0.04em;
+}
+
+.overview-kpi > div {
+  min-width: 0;
 }
 
 .overview-kpi div span {
   margin-top: 4px;
   color: var(--text-dim);
   font-size: 11px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .overview-connect-panel {
