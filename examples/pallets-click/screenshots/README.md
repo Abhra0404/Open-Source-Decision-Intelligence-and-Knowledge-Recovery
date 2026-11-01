@@ -1,0 +1,1 @@
+`question.png`, `answer-text.png`, and `citations.png` are separate direct browser captures of the real saved METIS Assistant conversation for this Click example.

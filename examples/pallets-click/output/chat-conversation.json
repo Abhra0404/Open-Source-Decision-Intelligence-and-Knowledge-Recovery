@@ -1,0 +1,85 @@
+{
+  "id": "81a6de03-2107-412d-a2be-2b974d280836",
+  "repository_id": "4bb8be0d-403e-4f29-9fc8-56290b966436",
+  "title": "Click less interruption behavior",
+  "created_at": "2026-11-01T00:22:49.999019Z",
+  "updated_at": "2026-11-01T00:22:55.221142Z",
+  "messages": [
+    {
+      "id": "642e1452-df13-46e2-a082-ff6ad602df83",
+      "conversation_id": "81a6de03-2107-412d-a2be-2b974d280836",
+      "role": "user",
+      "content": "What behavior does the Click pull request propose for quitting less in follow mode, and is this documented behavior accepted or still unresolved?",
+      "provider": null,
+      "model_name": null,
+      "prompt_version": "qa-v1",
+      "retrieval_latency_ms": null,
+      "generation_latency_ms": null,
+      "retrieved_evidence_count": 0,
+      "citation_count": 0,
+      "created_at": "2026-11-01T00:22:55.221142Z",
+      "qa_diagnostics": null,
+      "sources": []
+    },
+    {
+      "id": "388bfbe5-c997-4b7e-9528-e56a64c61a73",
+      "conversation_id": "81a6de03-2107-412d-a2be-2b974d280836",
+      "role": "assistant",
+      "content": "The Click pull request proposes documenting that to quit `less` in follow mode (`-f`), users should press `Ctrl+X` then `q`, and that pressing `Ctrl+C` will propagate to Click and quit the command as well [9904cefb-c573-455a-b2f5-eef7623d52c2]. This behavior is not accepted; the decision status is \"unresolved\" and the review status is \"needs_review\" [e3490b1e-d71c-493e-87a4-d83407ad297d].",
+      "provider": "groq",
+      "model_name": "qwen/qwen3.8-27b",
+      "prompt_version": "qa-v1",
+      "retrieval_latency_ms": 22,
+      "generation_latency_ms": 844,
+      "retrieved_evidence_count": 4,
+      "citation_count": 2,
+      "created_at": "2026-11-01T00:22:55.221142Z",
+      "qa_diagnostics": {
+        "request_id": "a733a067-9226-429c-b72b-c15ec0ad9349",
+        "llm_invoked": true,
+        "repository_id": "4bb8be0d-403e-4f29-9fc8-56290b966436",
+        "fallback_reason": null,
+        "normalized_query": "behavior propose quitting less follow mode documented accepted still unresolved",
+        "relevance_scores": [
+          {"score": 0.5, "decision_id": "e761b80b-faa2-4595-8376-b47ec3192040"},
+          {"score": 0.1, "decision_id": "00869a62-1710-403f-8641-3e34655a448a"}
+        ],
+        "original_question": "What behavior does the Click pull request propose for quitting less in follow mode, and is this documented behavior accepted or still unresolved?",
+        "retrieval_strategy": "full_text_or+token_coverage_v1",
+        "evidence_records_retrieved": 4,
+        "minimum_relevance_threshold": 0.3,
+        "candidate_decisions_retrieved": 2,
+        "decisions_remaining_after_filtering": 1,
+        "evidence_records_passing_validation": 4
+      },
+      "sources": [
+        {
+          "evidence_id": "e3490b1e-d71c-493e-87a4-d83407ad297d",
+          "decision_id": "e761b80b-faa2-4595-8376-b47ec3192040",
+          "decision_title": "Document `less` interruption behavior",
+          "decision_status": "unresolved",
+          "review_status": "needs_review",
+          "review_reason": "evidence role does not match the cited source content",
+          "decision_is_active": true,
+          "evidence_role": "proposal",
+          "excerpt": "This answer the question in https://github.com/pallets/click/issues/3886 on how Click and `less` interact with each others on `Ctrl+C`.",
+          "source_title": "Document `less` interruption behavior",
+          "source_url": "https://github.com/pallets/click/pull/3900"
+        },
+        {
+          "evidence_id": "9904cefb-c573-455a-b2f5-eef7623d52c2",
+          "decision_id": "e761b80b-faa2-4595-8376-b47ec3192040",
+          "decision_title": "Document `less` interruption behavior",
+          "decision_status": "unresolved",
+          "review_status": "needs_review",
+          "review_reason": "evidence role does not match the cited source content",
+          "decision_is_active": true,
+          "evidence_role": "objection",
+          "excerpt": "This feels way too verbose. It can be shortened to a couple sentences.\n\n> To quit `less` in follow mode (`-f`), press `Ctrl+X` then `q`. Pressing `Ctrl+C` will propagate to Click and quit the command as well.",
+          "source_title": null,
+          "source_url": "https://github.com/pallets/click/pull/3900#issuecomment-6498926214"
+        }
+      ]
+    }
+  ]
+}

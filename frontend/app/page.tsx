@@ -9,7 +9,6 @@ import { RepositoriesView } from "./components/RepositoriesView";
 import { DecisionsView } from "./components/DecisionsView";
 import { IntelligenceView } from "./components/IntelligenceView";
 import { EvolutionView } from "./components/EvolutionView";
-import { KnowledgeGraphView } from "./components/KnowledgeGraphView";
 import { DiscussionsView } from "./components/DiscussionsView";
 import { DiagnosticsView } from "./components/DiagnosticsView";
 import { ModelConfigView } from "./components/ModelConfigView";
@@ -30,7 +29,6 @@ const VALID_VIEWS: AppView[] = [
   "decisions",
   "intelligence",
   "evolution",
-  "knowledge-graph",
   "discussions",
   "diagnostics",
   "model-config",
@@ -129,6 +127,8 @@ export default function Home() {
   }, []);
 
   // Fetch repositories on mount
+  const DEFAULT_REPO = "pallets/click";
+
   useEffect(() => {
     loadRepositories();
   }, []);
@@ -140,8 +140,17 @@ export default function Home() {
       const data = await res.json();
       const items: Repository[] = data.items ?? [];
       setRepositories(items);
-      if (items.length > 0 && !selectedRepoId) {
-        setSelectedRepoId(items[0].id);
+      if (items.length === 0) {
+        // Auto-connect pallets/click on first run
+        handleConnectRepo(DEFAULT_REPO);
+        return;
+      }
+      if (!selectedRepoId) {
+        // Prefer pallets/click if it exists, otherwise first item
+        const preferred = items.find((r) =>
+          r.full_name.toLowerCase() === DEFAULT_REPO.toLowerCase()
+        );
+        setSelectedRepoId(preferred ? preferred.id : items[0].id);
       }
     } catch {
       // Backend warming up
@@ -355,7 +364,7 @@ export default function Home() {
           onExtract={handleExtractDecisions}
           isExtracting={isExtracting}
           isIngesting={isIngesting}
-          onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+          onGoHome={returnToLanding}
         />
 
         <main className="workspace-content">
@@ -371,7 +380,9 @@ export default function Home() {
                 onSelectDecision={(id) => setSelectedDecisionId(id)}
                 onNavigate={navigateToView}
                 onConnectRepo={handleConnectRepo}
+                onExtract={handleExtractDecisions}
                 isIngesting={isIngesting}
+                isExtracting={isExtracting}
                 statusMessage={statusMessage}
               />
             )}
@@ -402,16 +413,6 @@ export default function Home() {
 
             {currentView === "evolution" && (
               <EvolutionView
-                repositoryId={selectedRepoId}
-                onSelectDecision={(id) => {
-                  setSelectedDecisionId(id);
-                  navigateToView("decisions");
-                }}
-              />
-            )}
-
-            {currentView === "knowledge-graph" && (
-              <KnowledgeGraphView
                 repositoryId={selectedRepoId}
                 onSelectDecision={(id) => {
                   setSelectedDecisionId(id);

@@ -2,13 +2,8 @@
 
 import React, { useState } from "react";
 import {
-  FolderGit2,
   FileCheck2,
-  MessagesSquare,
-  ShieldCheck,
-  Clock,
   Network,
-  ExternalLink,
   Zap,
   ArrowRight,
   GitPullRequest,
@@ -32,7 +27,9 @@ interface OverviewViewProps {
   onSelectDecision: (id: string) => void;
   onNavigate: (view: AppView) => void;
   onConnectRepo: (url: string) => Promise<void>;
+  onExtract: () => void;
   isIngesting: boolean;
+  isExtracting: boolean;
   statusMessage: string;
 }
 
@@ -46,17 +43,13 @@ export function OverviewView({
   onSelectDecision,
   onNavigate,
   onConnectRepo,
+  onExtract,
   isIngesting,
+  isExtracting,
   statusMessage,
 }: OverviewViewProps) {
-  const [repoUrl, setRepoUrl] = useState("");
-
-  const approvedDecisions = decisions.filter(
-    (d) => d.review_status === "approved" || d.review_status === "valid"
-  );
-  const pendingReviews = decisions.filter(
-    (d) => d.review_status === "pending" || d.review_status === "needs_review"
-  );
+  const DEFAULT_REPO = "pallets/click";
+  const [repoUrl, setRepoUrl] = useState(DEFAULT_REPO);
 
   // Status breakdown calculations
   const totalDecisions = decisions.length;
@@ -70,7 +63,6 @@ export function OverviewView({
   const proposedPct = totalDecisions > 0 ? (proposedCount / totalDecisions) * 100 : 0;
   const unresolvedPct = totalDecisions > 0 ? (unresolvedCount / totalDecisions) * 100 : 0;
 
-  // Average confidence calculation
   const confScores = decisions.map((d) => d.confidence).filter((c): c is number => c !== null);
   const avgConfidence =
     confScores.length > 0
@@ -81,138 +73,117 @@ export function OverviewView({
     e.preventDefault();
     if (!repoUrl.trim()) return;
     await onConnectRepo(repoUrl.trim());
-    setRepoUrl("");
+    setRepoUrl(DEFAULT_REPO);
   }
 
   return (
-    <div>
-      {/* ── KPI Grid ────────────────────────────────────────── */}
-      <div className="kpi-grid">
-        <div className="kpi-card" onClick={() => onNavigate("repositories")} style={{ cursor: "pointer" }}>
-          <div className="kpi-card-header">
-            <span className="kpi-label">Repositories</span>
-            <FolderGit2 className="kpi-icon" />
-          </div>
-          <div className="kpi-value">{repositories.length}</div>
-          <div className="kpi-subtext">Connected codebases</div>
+    <div className="overview-page">
+      <div className="overview-intro">
+        <div>
+          <div className="overview-eyebrow">Repository intelligence</div>
+          <h1 className="overview-title">Make engineering decisions easier to find.</h1>
+          <p className="overview-subtitle">
+            Connect a repository, recover the reasoning behind changes, and keep every decision anchored to its source.
+          </p>
         </div>
-
-        <div className="kpi-card" onClick={() => onNavigate("discussions")} style={{ cursor: "pointer" }}>
-          <div className="kpi-card-header">
-            <span className="kpi-label">Discussions</span>
-            <MessagesSquare className="kpi-icon" />
-          </div>
-          <div className="kpi-value">{discussions.length}</div>
-          <div className="kpi-subtext">Issues, PRs & reviews analyzed</div>
-        </div>
-
-        <div className="kpi-card" onClick={() => onNavigate("decisions")} style={{ cursor: "pointer" }}>
-          <div className="kpi-card-header">
-            <span className="kpi-label">Decisions Recovered</span>
-            <FileCheck2 className="kpi-icon" />
-          </div>
-          <div className="kpi-value" style={{ color: "var(--accent)" }}>
-            {decisions.length}
-          </div>
-          <div className="kpi-subtext">Evidence-backed records</div>
-        </div>
-
-        <div className="kpi-card">
-          <div className="kpi-card-header">
-            <span className="kpi-label">Verified</span>
-            <ShieldCheck className="kpi-icon" />
-          </div>
-          <div className="kpi-value" style={{ color: "var(--success)" }}>
-            {approvedDecisions.length}
-          </div>
-          <div className="kpi-subtext">Human approved or valid</div>
-        </div>
-
-        <div className="kpi-card">
-          <div className="kpi-card-header">
-            <span className="kpi-label">Pending Reviews</span>
-            <Clock className="kpi-icon" />
-          </div>
-          <div className="kpi-value" style={{ color: "var(--warning)" }}>
-            {pendingReviews.length}
-          </div>
-          <div className="kpi-subtext">Awaiting maintainer audit</div>
-        </div>
-
-        <div className="kpi-card" onClick={() => onNavigate("evolution")} style={{ cursor: "pointer" }}>
-          <div className="kpi-card-header">
-            <span className="kpi-label">Relationships</span>
-            <Network className="kpi-icon" />
-          </div>
-          <div className="kpi-value" style={{ color: "var(--purple)" }}>
-            {relationshipCount}
-          </div>
-          <div className="kpi-subtext">Supersedes, refines & links</div>
+        <div className="overview-context">
+          <span className="status-dot" />
+          <span>{selectedRepo ? selectedRepo.full_name : "No repository selected"}</span>
         </div>
       </div>
 
-      {/* ── Active Repository Context Banner ──────────────────── */}
-      {selectedRepo ? (
-        <div
-          className="panel"
-          style={{
-            padding: "14px 20px",
-            marginBottom: "16px",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: "12px",
-            borderLeft: "3px solid var(--accent)",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <FolderGit2 size={20} color="var(--accent)" />
-            <div>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <span style={{ fontWeight: 700, fontSize: "15px", color: "var(--text)" }}>
-                  {selectedRepo.full_name}
-                </span>
-                {selectedRepo.default_branch && (
-                  <span className="badge badge-neutral" style={{ fontSize: "11px" }}>
-                    branch: {selectedRepo.default_branch}
-                  </span>
-                )}
-                {selectedRepo.extraction_status && (
-                  <span className={`badge badge-${selectedRepo.extraction_status}`}>
-                    {selectedRepo.extraction_status}
-                  </span>
-                )}
-              </div>
-              <div style={{ fontSize: "12px", color: "var(--text-dim)", marginTop: "2px" }}>
-                {decisions.length} decisions · {discussions.length} discussions ·{" "}
-                {avgConfidence !== null ? `${avgConfidence}% avg confidence` : "unrated"}
-              </div>
-            </div>
-          </div>
-
-          <div style={{ display: "flex", gap: "8px" }}>
-            <button
-              className="btn btn-secondary btn-sm"
-              onClick={() => onNavigate("intelligence")}
-            >
-              <Sparkles size={13} color="var(--accent)" />
-              Ask Questions
-            </button>
-            <button
-              className="btn btn-secondary btn-sm"
-              onClick={() => onNavigate("knowledge-graph")}
-            >
-              <Network size={13} color="var(--purple)" />
-              Knowledge Graph
-            </button>
+      <div className="overview-kpis" aria-label="Repository summary">
+        <div className="overview-kpi">
+          <span className="overview-kpi-icon overview-kpi-icon-blue"><FileCheck2 size={16} /></span>
+          <div>
+            <strong>{decisions.length}</strong>
+            <span>Decisions recovered</span>
           </div>
         </div>
-      ) : null}
+        <div className="overview-kpi">
+          <span className="overview-kpi-icon overview-kpi-icon-purple"><GitPullRequest size={16} /></span>
+          <div>
+            <strong>{discussions.length}</strong>
+            <span>Source discussions</span>
+          </div>
+        </div>
+        <div className="overview-kpi">
+          <span className="overview-kpi-icon overview-kpi-icon-green"><Network size={16} /></span>
+          <div>
+            <strong>{relationshipCount}</strong>
+            <span>Decision relationships</span>
+          </div>
+        </div>
+        <div className="overview-kpi">
+          <span className="overview-kpi-icon overview-kpi-icon-amber"><Sparkles size={16} /></span>
+          <div>
+            <strong>{avgConfidence !== null ? `${avgConfidence}%` : "—"}</strong>
+            <span>Average confidence</span>
+          </div>
+        </div>
+      </div>
 
-      {/* ── Decision Knowledge Distribution Bar ──────────────── */}
+      {/* ── 1. Connect / Ingest + Extract Panel (TOP) ─────────── */}
+      <div className="panel overview-connect-panel">
+        <div className="panel-header">
+          <div>
+            <div className="panel-title">
+              <GitPullRequest size={16} color="var(--accent)" />
+              Connect GitHub Repository
+            </div>
+            <div className="panel-description">
+              Ingest issues, pull requests, and review comments to recover architectural decisions.
+            </div>
+          </div>
+        </div>
+        <div className="panel-body">
+          <form onSubmit={handleConnect} className="overview-connect-form">
+            <input
+              className="input"
+              style={{ flex: 1, minWidth: "280px" }}
+              placeholder="https://github.com/owner/repository or owner/repo"
+              value={repoUrl}
+              onChange={(e) => setRepoUrl(e.target.value)}
+              disabled={isIngesting}
+            />
+            <button className="btn btn-primary" type="submit" disabled={isIngesting}>
+              {isIngesting && <span className="spinner" />}
+              {isIngesting ? "Ingesting…" : "Ingest Repository"}
+            </button>
+          </form>
+
+          {/* Extract Decisions — sits directly below Ingest */}
+          <div className="overview-extract-row">
+            <div             className="overview-extract-copy">
+              {selectedRepo
+                ? `Run the AI extraction pipeline on ${selectedRepo.full_name} to surface engineering decisions.`
+                : "Select a repository context above, then run the extraction pipeline."}
+            </div>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={onExtract}
+              disabled={isExtracting || !selectedRepo}
+              title="Trigger evidence-backed decision extraction"
+            >
+              <Zap size={13} />
+              {isExtracting ? "Extracting…" : "Extract Decisions"}
+            </button>
+          </div>
+
+          {statusMessage && (
+            <div
+              className="overview-status-message"
+            >
+              <Zap size={14} color="var(--accent)" />
+              {statusMessage}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── 2. Decision Knowledge Distribution Bar ─────────────── */}
       {totalDecisions > 0 && (
-        <div className="panel" style={{ marginBottom: "16px", padding: "16px 20px" }}>
+        <div className="panel overview-distribution-panel">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
             <div>
               <div style={{ fontWeight: 700, fontSize: "14px", color: "var(--text)" }}>
@@ -232,7 +203,6 @@ export function OverviewView({
             )}
           </div>
 
-          {/* Segmented Progress Bar */}
           <div
             style={{
               height: "10px",
@@ -269,7 +239,6 @@ export function OverviewView({
             )}
           </div>
 
-          {/* Legend and Shortcuts */}
           <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", fontSize: "12px" }}>
             <span
               style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}
@@ -303,56 +272,8 @@ export function OverviewView({
         </div>
       )}
 
-      {/* ── Connect / Ingest Panel ───────────────────────────── */}
-      <div className="panel">
-        <div className="panel-header">
-          <div>
-            <div className="panel-title">
-              <GitPullRequest size={16} color="var(--accent)" />
-              Connect GitHub Repository
-            </div>
-            <div className="panel-description">
-              Ingest issues, pull requests, and review comments to recover architectural decisions.
-            </div>
-          </div>
-        </div>
-        <div className="panel-body">
-          <form onSubmit={handleConnect} style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-            <input
-              className="input"
-              style={{ flex: 1, minWidth: "280px" }}
-              placeholder="https://github.com/owner/repository"
-              value={repoUrl}
-              onChange={(e) => setRepoUrl(e.target.value)}
-              disabled={isIngesting}
-            />
-            <button className="btn btn-primary" type="submit" disabled={isIngesting}>
-              {isIngesting && <span className="spinner" />}
-              {isIngesting ? "Ingesting…" : "Ingest Repository"}
-            </button>
-          </form>
-
-          {statusMessage && (
-            <div
-              style={{
-                marginTop: "12px",
-                fontSize: "13px",
-                color: "var(--text-muted)",
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-              }}
-            >
-              <Zap size={14} color="var(--accent)" />
-              {statusMessage}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── Two Column Layout for Activity & Recent Decisions ── */}
+      {/* ── 3. Recent Decisions Table ───────────────────────────── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "20px" }}>
-        {/* Recent Decisions Table */}
         <div className="panel">
           <div className="panel-header">
             <div>
@@ -382,7 +303,7 @@ export function OverviewView({
                 <FileCheck2 className="state-empty-icon" />
                 <div className="state-empty-title">No decisions extracted yet</div>
                 <div className="state-empty-desc">
-                  Connect a repository and click &ldquo;Extract Decisions&rdquo; in the top bar to run the extraction pipeline.
+                  Connect a repository and click &ldquo;Extract Decisions&rdquo; above to run the extraction pipeline.
                 </div>
               </div>
             ) : (
@@ -404,11 +325,7 @@ export function OverviewView({
                       <tr key={decision.id}>
                         <td style={{ maxWidth: "340px" }}>
                           <div
-                            style={{
-                              fontWeight: 600,
-                              color: "var(--text)",
-                              cursor: "pointer",
-                            }}
+                            style={{ fontWeight: 600, color: "var(--text)", cursor: "pointer" }}
                             onClick={() => onSelectDecision(decision.id)}
                           >
                             {decision.title}

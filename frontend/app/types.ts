@@ -295,7 +295,6 @@ export type AppView =
   | "decisions"
   | "intelligence"
   | "evolution"
-  | "knowledge-graph"
   | "discussions"
   | "diagnostics"
   | "model-config";

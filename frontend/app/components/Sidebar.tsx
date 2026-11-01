@@ -7,7 +7,6 @@ import {
   FileCheck2,
   Sparkles,
   History,
-  Network,
   MessagesSquare,
   Activity,
   Sliders,
@@ -119,14 +118,6 @@ export function Sidebar({
           >
             <History className="nav-link-icon" size={17} />
             {!collapsed && <span>Evolution</span>}
-          </button>
-          <button
-            className={`nav-link ${view === "knowledge-graph" ? "active" : ""}`}
-            onClick={() => setView("knowledge-graph")}
-            title="Interactive Knowledge Graph"
-          >
-            <Network className="nav-link-icon" size={17} />
-            {!collapsed && <span>Knowledge Graph</span>}
           </button>
         </div>
 

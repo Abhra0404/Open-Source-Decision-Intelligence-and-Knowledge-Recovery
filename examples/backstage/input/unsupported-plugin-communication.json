@@ -1,0 +1,18 @@
+{
+  "repository": {
+    "id": "16c18238-5b49-4eb7-afde-af7d66dd6b8b",
+    "full_name": "backstage/backstage"
+  },
+  "conversation": {
+    "id": "0cb9c293-b94b-4326-83f1-76da013508c9",
+    "title": "Unsupported evidence example",
+    "created_at": "2026-11-01T00:16:45.953770Z"
+  },
+  "request": {
+    "method": "POST",
+    "endpoint": "http://127.0.0.1:8001/api/v1/chat/conversations/0cb9c293-b94b-4326-83f1-76da013508c9/messages",
+    "body": {
+      "content": "Which accepted decisions explain how Backstage plugins should communicate with one another?"
+    }
+  }
+}
